@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntinit.c,v 1.3 2007/03/16 13:47:56 kozuka Exp $
+ * $Id: ntinit.c,v 1.4 2007/03/16 17:13:15 kozuka Exp $
  */
 #include "globals.h"
 
@@ -45,6 +45,8 @@ NTSTATUS SCTPReceiveDatagram6(IN PVOID, IN LONG, IN PVOID, IN LONG,
 NTSTATUS SCTPSendDatagram(IN struct mpkt *, IN struct in_addr *);
 NTSTATUS SendDatagram6(IN UCHAR *, IN struct in6_addr *, IN ULONG);
 VOID SCTPReceiveThread(IN PVOID);
+VOID ClientPnPAddNetAddress(IN PTA_ADDRESS, IN PUNICODE_STRING, IN PTDI_PNP_CONTEXT);
+VOID ClientPnPDelNetAddress(IN PTA_ADDRESS, IN PUNICODE_STRING, IN PTDI_PNP_CONTEXT);
 
 NTSTATUS SCTPCreate(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPCleanup(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
@@ -64,7 +66,7 @@ struct ifqueue {
 } *inq, *in6q;
 
 PFILE_OBJECT TpObject, Tp6Object, RcvObject;
-HANDLE TpHandle, Tp6Handle, RcvHandle;
+HANDLE TpHandle, Tp6Handle, RcvHandle, BindingHandle;
 
 NTSTATUS
 DriverEntry(
@@ -77,10 +79,28 @@ DriverEntry(
 	KEVENT kCompleteEvent;
 	IO_STATUS_BLOCK statusBlock;
 	OBJECT_ATTRIBUTES  ObjectAttributes;
+	TDI_CLIENT_INTERFACE_INFO ClientInterfaceInfo;
+	UNICODE_STRING clientName;
+	
 	int i;
 
 	DbgPrint("Enter into DriverEntry\n");
 
+	RtlZeroMemory(&ClientInterfaceInfo, sizeof(ClientInterfaceInfo));
+	RtlInitUnicodeString(&clientName, L"HKLM\\System\\CCS\\Services\\Sctp");
+	ClientInterfaceInfo.MajorTdiVersion = TDI_CURRENT_MAJOR_VERSION;
+	ClientInterfaceInfo.MinorTdiVersion = TDI_CURRENT_MINOR_VERSION;
+	ClientInterfaceInfo.ClientName = &clientName;
+	ClientInterfaceInfo.AddAddressHandlerV2 = ClientPnPAddNetAddress;
+	ClientInterfaceInfo.DelAddressHandlerV2 = ClientPnPDelNetAddress;
+
+	status = TdiRegisterPnPHandlers(&ClientInterfaceInfo,
+	    sizeof(ClientInterfaceInfo),
+	    &BindingHandle);
+	if (status != STATUS_SUCCESS) {
+		BindingHandle = NULL;
+		goto error;
+	}
 	sctp_init();
 
 	for ( i = 0; i < IRP_MJ_MAXIMUM_FUNCTION; i++ ) {
@@ -151,14 +171,20 @@ Unload(
 
 	DbgPrint("Enter into Unload\n");
 
-	RcvContext->bActive = FALSE;
-	KeSetEvent(&RcvContext->event, IO_NO_INCREMENT, FALSE);
-	status = KeWaitForSingleObject(RcvObject,
-	    Executive,
-	    KernelMode,
-	    FALSE,
-	    NULL);
-	ObDereferenceObject(RcvObject);
+	if (BindingHandle != NULL) {
+		TdiDeregisterPnPHandlers(BindingHandle);
+	}
+
+	if (RcvContext != NULL) {
+		RcvContext->bActive = FALSE;
+		KeSetEvent(&RcvContext->event, IO_NO_INCREMENT, FALSE);
+		status = KeWaitForSingleObject(RcvObject,
+		    Executive,
+		    KernelMode,
+		    FALSE,
+		    NULL);
+		ObDereferenceObject(RcvObject);
+	}
 
 	if (TpObject != NULL) {
 		ObDereferenceObject(TpObject);
@@ -174,6 +200,61 @@ Unload(
 		ZwClose(Tp6Handle);
 	}
 	DbgPrint("Left from Unload\n");
+}
+
+
+VOID
+ClientPnPAddNetAddress(
+    IN PTA_ADDRESS Address,
+    IN PUNICODE_STRING DeviceName,
+    IN PTDI_PNP_CONTEXT Context)
+{
+	unsigned char *p;
+
+	DbgPrint("ClientPnPAddNetAddress\n");
+	switch (Address->AddressType) {
+	case TDI_ADDRESS_TYPE_IP:
+		p = (unsigned char *)&((PTDI_ADDRESS_IP)Address->Address)->in_addr;
+		DbgPrint("DeviceName => %ws\n", DeviceName->Buffer);
+		DbgPrint("IPv4 address: %u.%u.%u.%u\n",
+		    p[0], p[1], p[2], p[3]);
+		break;
+	case TDI_ADDRESS_TYPE_IP6:
+		DbgPrint("DeviceName => %ws\n", DeviceName->Buffer);
+		DbgPrint("IPv6 address: %s%%%d\n",
+		    ip6_sprintf((struct in6_addr *)&((PTDI_ADDRESS_IP6)Address->Address)->sin6_addr),
+		    ((PTDI_ADDRESS_IP6)Address->Address)->sin6_scope_id);
+		break;
+	default:
+		break;
+	}
+}
+
+VOID
+ClientPnPDelNetAddress(
+    IN PTA_ADDRESS Address,
+    IN PUNICODE_STRING DeviceName,
+    IN PTDI_PNP_CONTEXT Context)
+{
+	unsigned char *p;
+
+	DbgPrint("ClientPnPDelNetAddress\n");
+	switch (Address->AddressType) {
+	case TDI_ADDRESS_TYPE_IP:
+		p = (unsigned char *)&((PTDI_ADDRESS_IP)Address->Address)->in_addr;
+		DbgPrint("DeviceName => %ws\n", DeviceName->Buffer);
+		DbgPrint("IPv4 address: %u.%u.%u.%u\n",
+		    p[0], p[1], p[2], p[3]);
+		break;
+	case TDI_ADDRESS_TYPE_IP6:
+		DbgPrint("DeviceName => %ws\n", DeviceName->Buffer);
+		DbgPrint("IPv6 address: %s%%%d\n",
+		    ip6_sprintf((struct in6_addr *)&((PTDI_ADDRESS_IP6)Address->Address)->sin6_addr),
+		    ((PTDI_ADDRESS_IP6)Address->Address)->sin6_scope_id);
+		break;
+	default:
+		break;
+	}
 }
 
 
@@ -279,7 +360,7 @@ OpenRawSctp(
 
 		eaInfo->EaNameLength = TDI_TRANSPORT_ADDRESS_LENGTH;
 		RtlCopyMemory(eaInfo->EaName, TdiTransportAddress, sizeof(TdiTransportAddress));
-		eaInfo->EaValueLength = sizeof (TA_IP_ADDRESS);
+		eaInfo->EaValueLength = sizeof(TA_IP_ADDRESS);
 
 		taAddress = (PTA_IP_ADDRESS)(eaInfo->EaName + sizeof(TdiTransportAddress));
 		taAddress->TAAddressCount = 1;
