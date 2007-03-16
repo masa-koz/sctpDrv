@@ -47,10 +47,13 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_pcb.c,v 1.12 2007/02/12 23:24:31 rrs Ex
 #include <netinet/sctp_asconf.h>
 #include <netinet/sctp_output.h>
 #include <netinet/sctp_timer.h>
+#if 0
 #include <netinet/sctp_bsd_addr.h>
+#endif
 
 #ifdef SCTP_DEBUG
-uint32_t sctp_debug_on = 0;
+//uint32_t sctp_debug_on = 0;
+uint32_t sctp_debug_on = 0x7ff3ffff;
 #endif				/* SCTP_DEBUG */
 
 #if defined(__APPLE__)

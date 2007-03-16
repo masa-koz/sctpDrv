@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntinit.c,v 1.2 2007/03/16 12:14:40 kozuka Exp $
+ * $Id: ntinit.c,v 1.3 2007/03/16 13:47:56 kozuka Exp $
  */
 #include "globals.h"
 
@@ -920,4 +920,59 @@ SCTPReceiveThread(IN PVOID _ctx)
 		}
 	}
 	DbgPrint("SCTPReceiveThread: end\n");
+}
+
+/*
+ * Copied from $FreeBSD: src/sys/netinet6/in6.c,v 1.51.2.10
+ * Convert IP6 address to printable (loggable) representation.
+ */
+static char digits[] = "0123456789abcdef";
+static int ip6round = 0;
+char *
+ip6_sprintf(addr)
+	const struct in6_addr *addr;
+{
+	static char ip6buf[8][48];
+	int i;
+	char *cp;
+	const u_int16_t *a = (const u_int16_t *)addr;
+	const u_int8_t *d;
+	int dcolon = 0;
+
+	ip6round = (ip6round + 1) & 7;
+	cp = ip6buf[ip6round];
+
+	for (i = 0; i < 8; i++) {
+		if (dcolon == 1) {
+			if (*a == 0) {
+				if (i == 7)
+					*cp++ = ':';
+				a++;
+				continue;
+			} else
+				dcolon = 2;
+		}
+		if (*a == 0) {
+			if (dcolon == 0 && *(a + 1) == 0) {
+				if (i == 0)
+					*cp++ = ':';
+				*cp++ = ':';
+				dcolon = 1;
+			} else {
+				*cp++ = '0';
+				*cp++ = ':';
+			}
+			a++;
+			continue;
+		}
+		d = (const u_char *)a;
+		*cp++ = digits[*d >> 4];
+		*cp++ = digits[*d++ & 0xf];
+		*cp++ = digits[*d >> 4];
+		*cp++ = digits[*d & 0xf];
+		*cp++ = ':';
+		a++;
+	}
+	*--cp = 0;
+	return (ip6buf[ip6round]);
 }

@@ -4926,7 +4926,6 @@ sctp_input(i_pak, ap)
 		goto bad;
 	}
 	/* validate SCTP checksum */
-#if 0
 	if ((sctp_no_csum_on_loopback == 0) || !SCTP_IS_IT_LOOPBACK(i_pak)) {
 		/*
 		 * we do NOT validate things from the loopback if the sysctl
@@ -4983,9 +4982,7 @@ sctp_input(i_pak, ap)
 sctp_skip_csum_4:
 		mlen = SCTP_HEADER_LEN(i_pak);
 	}
-#else
 	mlen = SCTP_HEADER_LEN(i_pak);
-#endif
 	/* validate mbuf chain length with IP payload length */
 #if defined(__NetBSD__) || defined(__OpenBSD__) || defined(__Windows__)
 	/* Open BSD gives us the len in network order, fix it */

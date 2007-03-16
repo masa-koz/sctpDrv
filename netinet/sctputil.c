@@ -50,7 +50,9 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctputil.c,v 1.13 2007/02/12 23:24:31 rrs Ex
 #include <netinet/sctp_indata.h>/* for sctp_deliver_data() */
 #include <netinet/sctp_auth.h>
 #include <netinet/sctp_asconf.h>
+#if 0
 #include <netinet/sctp_bsd_addr.h>
+#endif
 
 extern int sctp_warm_the_crc32_table;
 
@@ -2388,6 +2390,7 @@ sctp_timer_stop(int t_type, struct sctp_inpcb *inp, struct sctp_tcb *stcb,
 	SCTP_OS_TIMER_STOP(&tmr->timer);
 	return (0);
 }
+#endif
 
 #ifdef SCTP_USE_ADLER32
 static uint32_t
@@ -2439,8 +2442,8 @@ sctp_calculate_len(struct mbuf *m)
 
 	at = m;
 	while (at) {
-		tlen += SCTP_BUF_LEN(at);
-		at = SCTP_BUF_NEXT(at);
+		tlen += SCTP_BUF_GET_LEN(at);
+		at = SCTP_BUF_GET_NEXT(at);
 	}
 	return (tlen);
 }
@@ -2523,38 +2526,38 @@ sctp_calculate_sum(struct mbuf *m, int32_t * pktlen, uint32_t offset)
 
 	at = m;
 	/* find the correct mbuf and offset into mbuf */
-	while ((at != NULL) && (offset > (uint32_t) SCTP_BUF_LEN(at))) {
-		offset -= SCTP_BUF_LEN(at);	/* update remaining offset left */
-		at = SCTP_BUF_NEXT(at);
+	while ((at != NULL) && (offset > (uint32_t) SCTP_BUF_GET_LEN(at))) {
+		offset -= SCTP_BUF_GET_LEN(at);	/* update remaining offset left */
+		at = SCTP_BUF_GET_NEXT(at);
 	}
 	while (at != NULL) {
-		if ((SCTP_BUF_LEN(at) - offset) > 0) {
+		if ((SCTP_BUF_GET_LEN(at) - offset) > 0) {
 #ifdef SCTP_USE_ADLER32
 			base = update_adler32(base,
 					      (unsigned char *)(SCTP_BUF_AT(at, offset)),
-					      (unsigned int)(SCTP_BUF_LEN(at) - offset));
+					      (unsigned int)(SCTP_BUF_GET_LEN(at) - offset));
 #else
-			if ((SCTP_BUF_LEN(at) - offset) < 4) {
+			if ((SCTP_BUF_GET_LEN(at) - offset) < 4) {
 				/* Use old method if less than 4 bytes */
 				base = old_update_crc32(base, 
 							(unsigned char *)(SCTP_BUF_AT(at, offset)),
-							(unsigned int)(SCTP_BUF_LEN(at) - offset));
+							(unsigned int)(SCTP_BUF_GET_LEN(at) - offset));
 			} else {
 				base = update_crc32(base,
 						    (unsigned char *)(SCTP_BUF_AT(at, offset)),
-						    (unsigned int)(SCTP_BUF_LEN(at) - offset));
+						    (unsigned int)(SCTP_BUF_GET_LEN(at) - offset));
 			}
 #endif				/* SCTP_USE_ADLER32 */
-			tlen += SCTP_BUF_LEN(at) - offset;
+			tlen += SCTP_BUF_GET_LEN(at) - offset;
 			/* we only offset once into the first mbuf */
 		}
 		if (offset) {
-			if(offset < SCTP_BUF_LEN(at))
+			if(offset < SCTP_BUF_GET_LEN(at))
 				offset = 0;
 			else
-				offset -= SCTP_BUF_LEN(at);
+				offset -= SCTP_BUF_GET_LEN(at);
 		}
-		at = SCTP_BUF_NEXT(at);
+		at = SCTP_BUF_GET_NEXT(at);
 	}
 	if (pktlen != NULL) {
 		*pktlen = tlen;
@@ -2572,6 +2575,7 @@ sctp_calculate_sum(struct mbuf *m, int32_t * pktlen, uint32_t offset)
 
 #endif
 
+#if 0
 void
 sctp_mtu_size_reset(struct sctp_inpcb *inp,
     struct sctp_association *asoc, uint32_t mtu)
@@ -3900,6 +3904,7 @@ sctp_cmpaddr(struct sockaddr *sa1, struct sockaddr *sa2)
 		return (0);
 	}
 }
+#endif
 
 void
 sctp_print_address(struct sockaddr *sa)
@@ -3940,12 +3945,16 @@ sctp_print_address_pkt(struct ip *iph, struct sctphdr *sh)
 		struct sockaddr_in lsa, fsa;
 
 		bzero(&lsa, sizeof(lsa));
+#ifdef HAVE_SALEN
 		lsa.sin_len = sizeof(lsa);
+#endif
 		lsa.sin_family = AF_INET;
 		lsa.sin_addr = iph->ip_src;
 		lsa.sin_port = sh->src_port;
 		bzero(&fsa, sizeof(fsa));
+#ifdef HAVE_SALEN
 		fsa.sin_len = sizeof(fsa);
+#endif
 		fsa.sin_family = AF_INET;
 		fsa.sin_addr = iph->ip_dst;
 		fsa.sin_port = sh->dest_port;
@@ -3959,12 +3968,16 @@ sctp_print_address_pkt(struct ip *iph, struct sctphdr *sh)
 
 		ip6 = (struct ip6_hdr *)iph;
 		bzero(&lsa6, sizeof(lsa6));
+#ifdef HAVE_SALEN
 		lsa6.sin6_len = sizeof(lsa6);
+#endif
 		lsa6.sin6_family = AF_INET6;
 		lsa6.sin6_addr = ip6->ip6_src;
 		lsa6.sin6_port = sh->src_port;
 		bzero(&fsa6, sizeof(fsa6));
+#ifdef HAVE_SALEN
 		fsa6.sin6_len = sizeof(fsa6);
+#endif
 		fsa6.sin6_family = AF_INET6;
 		fsa6.sin6_addr = ip6->ip6_dst;
 		fsa6.sin6_port = sh->dest_port;
@@ -3975,6 +3988,7 @@ sctp_print_address_pkt(struct ip *iph, struct sctphdr *sh)
 	}
 }
 
+#if 0
 void
 sctp_pull_off_control_to_new_inp(struct sctp_inpcb *old_inp,
     struct sctp_inpcb *new_inp,

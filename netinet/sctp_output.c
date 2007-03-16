@@ -50,7 +50,9 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_output.c,v 1.11 2007/02/12 23:24:31 rrs
 #include <netinet/sctp_timer.h>
 #include <netinet/sctp_asconf.h>
 #include <netinet/sctp_indata.h>
+#if 0
 #include <netinet/sctp_bsd_addr.h>
+#endif
 
 #ifdef SCTP_DEBUG
 extern uint32_t sctp_debug_on;
@@ -3340,9 +3342,11 @@ sctp_get_ect(struct sctp_tcb *stcb,
 		return (SCTP_ECT0_BIT);
 	}
 }
+#endif
 
 extern int sctp_no_csum_on_loopback;
 
+#if 0
 #if !defined(__FreeBSD__) && !defined(RANDOM_IP_ID) || !defined(__NetBSD__) || !defined(__OpenBSD__)
 uint16_t ip_id = 0;
 #endif
@@ -10174,7 +10178,7 @@ sctp_send_abort(struct mbuf *m, int iphlen, struct sctphdr *sh, uint32_t vtag,
 #if !defined(__Windows__)
 		ip6_out->ip6_hlim = ip6_defhlim;
 #else
-		ip6_out->ip6_hlim = 50; /* XXX */
+		ip6_out->ip6_hlim = 255; /* XXX */
 #endif
 		ip6_out->ip6_nxt = IPPROTO_SCTP;
 		ip6_out->ip6_src = ip6->ip6_dst;
@@ -10232,15 +10236,11 @@ sctp_send_abort(struct mbuf *m, int iphlen, struct sctphdr *sh, uint32_t vtag,
 	}
 
 	/* add checksum */
-#if 0
 	if ((sctp_no_csum_on_loopback) && SCTP_IS_IT_LOOPBACK(m)) {
 		abm->sh.checksum = 0;
 	} else {
 		abm->sh.checksum = sctp_calculate_sum(mout, NULL, iphlen_out);
 	}
-#else
-	abm->sh.checksum = 0;
-#endif
 	if (iph_out != NULL) {
 		struct route ro;
 

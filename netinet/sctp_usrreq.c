@@ -42,7 +42,9 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_usrreq.c,v 1.11 2007/02/12 23:24:31 rrs
 #include <netinet/sctp_header.h>
 #include <netinet/sctp_var.h>
 #include <netinet/sctp_output.h>
+#if 0
 #include <netinet/sctp_bsd_addr.h>
+#endif
 #include <netinet/sctp_uio.h>
 #include <netinet/sctp_asconf.h>
 #include <netinet/sctputil.h>
