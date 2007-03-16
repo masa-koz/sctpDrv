@@ -2,8 +2,11 @@ MAKEDIR=.
 TARGETNAME=sctp
 TARGETPATH=.
 TARGETTYPE=DRIVER
-TARGETLIBS=$(BASEDIR)\lib\wxp\i386\tdi.lib
-C_DEFINES=-DNTVERSION=$(NTVERSION)
-MSC_WARNING_LEVEL=/FR
-INCLUDES=..\inc;$(BASEDIR)\inc;$(BASEDIR)\src\network\inc
+TARGETLIBS= \
+    $(BASEDIR)\lib\wxp\i386\tdi.lib \
+    $(BASEDIR)\lib\wxp\i386\ndis.lib \
+    ..\netinet\i386\netinet.lib
+C_DEFINES=-DNTVERSION=$(NTVERSION) -D__Windows__ -D_KERNEL
+MSC_WARNING_LEVEL=/W3 /WX
+INCLUDES=..\;..\inc;..\algrthms;$(BASEDIR)\inc;$(BASEDIR)\src\network\inc
 SOURCES= ntinit.c ntdisp.c

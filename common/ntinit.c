@@ -21,9 +21,13 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntinit.c,v 1.1 2007/03/07 15:05:05 kozuka Exp $
+ * $Id: ntinit.c,v 1.2 2007/03/16 12:14:40 kozuka Exp $
  */
-#include "sctp_common.h"
+#include "globals.h"
+
+#include <netinet/sctp_os_windows.h>
+#include <netinet/sctp_var.h>
+#include <netinet/sctp_pcb.h>
 
 #define RawIPDeviceWithSCTP L"\\Device\\RawIP\\132"
 #define RawIP6DeviceWithSCTP L"\\Device\\RawIp6\\132"
@@ -38,6 +42,9 @@ NTSTATUS SCTPReceiveDatagram(IN PVOID, IN LONG, IN PVOID, IN LONG,
     IN PVOID, IN ULONG, IN ULONG, IN ULONG, OUT ULONG *, IN PVOID, OUT PIRP *);
 NTSTATUS SCTPReceiveDatagram6(IN PVOID, IN LONG, IN PVOID, IN LONG,
     IN PVOID, IN ULONG, IN ULONG, IN ULONG, OUT ULONG *, IN PVOID, OUT PIRP *);
+NTSTATUS SCTPSendDatagram(IN struct mpkt *, IN struct in_addr *);
+NTSTATUS SendDatagram6(IN UCHAR *, IN struct in6_addr *, IN ULONG);
+VOID SCTPReceiveThread(IN PVOID);
 
 NTSTATUS SCTPCreate(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPCleanup(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
@@ -45,14 +52,19 @@ NTSTATUS SCTPClose(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPDispatchInternalDeviceControl(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPDispatchDeviceControl(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
 
-#if 0
-NTSTATUS SendDatagram(IN struct SctpAddress *, IN struct SctpAddress *);
-#endif
+struct RcvContext {
+	BOOLEAN		bActive;
+	KEVENT		event;
+} *RcvContext, *Rcv6Context;
 
+struct ifqueue {
+	struct mpkt	*head;
+	struct mpkt	*tail;
+	KMUTEX		mtx;
+} *inq, *in6q;
 
-PFILE_OBJECT TpObject, Tp6Object;
-HANDLE TpHandle, Tp6Handle;
-
+PFILE_OBJECT TpObject, Tp6Object, RcvObject;
+HANDLE TpHandle, Tp6Handle, RcvHandle;
 
 NTSTATUS
 DriverEntry(
@@ -64,9 +76,13 @@ DriverEntry(
 	PIRP irp;
 	KEVENT kCompleteEvent;
 	IO_STATUS_BLOCK statusBlock;
+	OBJECT_ATTRIBUTES  ObjectAttributes;
 	int i;
 
 	DbgPrint("Enter into DriverEntry\n");
+
+	sctp_init();
+
 	for ( i = 0; i < IRP_MJ_MAXIMUM_FUNCTION; i++ ) {
 		DriverObject->MajorFunction[i] = SCTPDispatch;
 	}
@@ -87,6 +103,37 @@ DriverEntry(
 		goto error;
 	}
 
+	RcvContext = ExAllocatePool(NonPagedPool, sizeof(*RcvContext));
+	RtlZeroMemory(RcvContext, sizeof(*RcvContext));
+	KeInitializeEvent(&RcvContext->event, SynchronizationEvent, FALSE);
+	RcvContext->bActive = TRUE;
+
+	inq = ExAllocatePool(NonPagedPool, sizeof(*inq));
+	RtlZeroMemory(inq, sizeof(*inq));
+	KeInitializeMutex(&inq->mtx, 0);
+
+	InitializeObjectAttributes(&ObjectAttributes,
+	    NULL,
+	    OBJ_KERNEL_HANDLE,
+	    NULL,
+	    NULL);
+	status = PsCreateSystemThread(&RcvHandle,
+	    0,
+	    &ObjectAttributes,
+	    NULL,
+	    NULL,
+	    SCTPReceiveThread,
+	    RcvContext);
+	if (status == STATUS_SUCCESS) {
+		ObReferenceObjectByHandle(RcvHandle,
+		    GENERIC_READ | GENERIC_WRITE,
+		    NULL,
+		    KernelMode,
+		    (PVOID *)&RcvObject,
+		    NULL);
+		ZwClose(RcvHandle);
+	}
+
 	DbgPrint("Leave from DriverEntry#1\n");
 
 	return STATUS_SUCCESS;
@@ -100,7 +147,19 @@ VOID
 Unload(
     IN PDRIVER_OBJECT DriverObject)
 {
+	NTSTATUS status;
+
 	DbgPrint("Enter into Unload\n");
+
+	RcvContext->bActive = FALSE;
+	KeSetEvent(&RcvContext->event, IO_NO_INCREMENT, FALSE);
+	status = KeWaitForSingleObject(RcvObject,
+	    Executive,
+	    KernelMode,
+	    FALSE,
+	    NULL);
+	ObDereferenceObject(RcvObject);
+
 	if (TpObject != NULL) {
 		ObDereferenceObject(TpObject);
 	}
@@ -454,205 +513,221 @@ done:
 	return status;
 }
 
-#if 0
+
 NTSTATUS
-SendDatagram(
-    IN struct SctpAddress *LocalAddr,
-    IN struct SctpAddress *RemoteAddr)
+SCTPSendDatagram(
+    IN struct mpkt *pkt,
+    IN struct in_addr *dest)
 {
-	PFILE_OBJECT transport;
 	PTDI_CONNECTION_INFORMATION connectInfo;
+	PTA_IP_ADDRESS taAddress;
+	PDEVICE_OBJECT deviceObject;
 	PIRP irp;
 	KEVENT event;
 	IO_STATUS_BLOCK statusBlock;
 	NTSTATUS status;
-	PMDL mdl = NULL;
-        UCHAR *pkt;
-#ifndef DO_IPV6
-	UCHAR Tsdu[] = {
-	    0x45,0x00,0x00,0x50,0x00,0xbb,0x00,0x00,0x80,0x84,0x93,0x0b,
-	    0xc0,0xa8,0x92,0x81,0xc0,0xa8,0x92,0x01,
-	    0x00,0x50,0x00,0x50,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	    0x01,0x00,0x00,0x1c,0x00,0x00,0x00,0x00,0x00,0x00,0xff,0xff,
-	    0x00,0x01,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x05,0x00,0x08,
-	    0xc0,0xa8,0x01,0xfb
-	};
-#else
-	UCHAR Tsdu[] = {
-	    0x60,0x00,0x00,0x00,0x00,0x28,0x84,0x80,0xfe,0x80,0x00,0x00,
-	    0x00,0x00,0x00,0x00,0x02,0x0c,0x29,0xff,0xfe,0x4e,0x66,0x06,
-	    0xfe,0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x02,0x50,0x56,0xff,
-	    0xfe,0xc0,0x00,0x08,
-	    0x00,0x50,0x00,0x50,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	    0x01,0x00,0x00,0x1c,0x00,0x00,0x00,0x00,0x00,0x00,0xff,0xff,
-	    0x00,0x01,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x05,0x00,0x08,
-	    0xc0,0xa8,0x01,0xfb
-	};
-#endif
+	PNDIS_BUFFER buffer = NULL, firstBuffer, nextBuffer, failedBuffer;
+	ULONG packetLength = 0;
 
-	DbgPrint("SendDatagram\n");
+	DbgPrint("Enter into SCTPSendDatagram\n");
 
-	pkt = ExAllocatePool(NonPagedPool, sizeof(Tsdu));
-	RtlCopyMemory(pkt, Tsdu, sizeof(Tsdu));
+	NdisQueryPacket(pkt->ndis_packet, NULL, NULL, &firstBuffer, &packetLength);
 
-	if (RemoteAddr->family != LocalAddr->family) {
-		return STATUS_INVALID_PARAMETER;
+	DbgPrint("buffer => %p, packetLength => %d\n",
+	    buffer, packetLength);
+	connectInfo = (PTDI_CONNECTION_INFORMATION)ExAllocatePool(NonPagedPool,
+	    sizeof(TDI_CONNECTION_INFORMATION) +
+	    sizeof(TA_IP_ADDRESS));
+	if (connectInfo == NULL) {
+		DbgPrint("No memory for PTDI_CONNECTION_INFORMATION\n");
+		status = STATUS_INSUFFICIENT_RESOURCES;
+		goto error;
 	}
 
-	if (RemoteAddr->family == AF_INET) {
-		PTA_IP_ADDRESS address;
+	RtlZeroMemory(connectInfo,
+	    sizeof(TDI_CONNECTION_INFORMATION) + sizeof(TA_IP_ADDRESS));
+	connectInfo->RemoteAddressLength = sizeof(TA_IP_ADDRESS);
+	connectInfo->RemoteAddress = (PUCHAR)connectInfo +
+	    sizeof(TDI_CONNECTION_INFORMATION);
+	taAddress = (PTA_IP_ADDRESS)connectInfo->RemoteAddress;
+	taAddress->TAAddressCount = 1;
+	taAddress->Address[0].AddressLength = sizeof(TDI_ADDRESS_IP);
+	taAddress->Address[0].AddressType = TDI_ADDRESS_TYPE_IP;
+	RtlCopyMemory(&((PTDI_ADDRESS_IP)taAddress->Address[0].Address)->in_addr,
+	    dest, sizeof(struct in_addr));
 
-		DbgPrint("RemoteAddr->family == AF_INET\n");
-		connectInfo = (PTDI_CONNECTION_INFORMATION)ExAllocatePool(NonPagedPool,
-		    sizeof(TDI_CONNECTION_INFORMATION) +
-		    sizeof(TA_IP_ADDRESS));
-		if (connectInfo == NULL) {
-			DbgPrint("ERROR: No memory for PTDI_CONNECTION_INFORMATION\n");
-			return STATUS_INSUFFICIENT_RESOURCES;
-		}
+	deviceObject = IoGetRelatedDeviceObject(TpObject);
 
-		RtlZeroMemory(connectInfo,
-		    sizeof(TDI_CONNECTION_INFORMATION) + sizeof(TA_IP_ADDRESS));
-		DbgPrint("after -- RtlZeroMemory\n");
-		connectInfo->RemoteAddressLength = sizeof(TA_IP_ADDRESS);
-		connectInfo->RemoteAddress = (PUCHAR)connectInfo +
-		    sizeof(TDI_CONNECTION_INFORMATION);
-		address = (PTA_IP_ADDRESS)connectInfo->RemoteAddress;
-		address->TAAddressCount = 1;
-		address->Address[0].AddressLength = sizeof(TDI_ADDRESS_IP);
-		address->Address[0].AddressType = TDI_ADDRESS_TYPE_IP;
-		RtlCopyMemory(&((PTDI_ADDRESS_IP)address->Address[0].Address)->in_addr,
-		    &RemoteAddr->addr.in_addr, sizeof(struct in_addr));
-
-		transport = Transport;
-	} else if (RemoteAddr->family == AF_INET6) {
-		PTA_IP6_ADDRESS address;
-
-		DbgPrint("RemoteAddr->family == AF_INET6\n");
-		connectInfo = (PTDI_CONNECTION_INFORMATION)ExAllocatePool(NonPagedPool,
-		    sizeof(TDI_CONNECTION_INFORMATION) +
-		    sizeof(TA_IP6_ADDRESS));
-		if (connectInfo == NULL) {
-			DbgPrint("ERROR: No memory for PTDI_CONNECTION_INFORMATION\n");
-			return STATUS_INSUFFICIENT_RESOURCES;
-		}
-
-		RtlZeroMemory(connectInfo,
-		    sizeof(TDI_CONNECTION_INFORMATION) + sizeof(TA_IP6_ADDRESS));
-		connectInfo->RemoteAddressLength = sizeof(TA_IP6_ADDRESS);
-		connectInfo->RemoteAddress = (PUCHAR)connectInfo +
-		    sizeof(TDI_CONNECTION_INFORMATION);
-		address = (PTA_IP6_ADDRESS)connectInfo->RemoteAddress;
-		address->TAAddressCount = 1;
-		address->Address[0].AddressLength = sizeof(TDI_ADDRESS_IP6);
-		address->Address[0].AddressType = TDI_ADDRESS_TYPE_IP6;
-		RtlCopyMemory(&((PTDI_ADDRESS_IP6)address->Address[0].Address)->sin6_addr,
-		    &RemoteAddr->addr.in6.addr, sizeof(struct in6_addr));
-	    
-		((PTDI_ADDRESS_IP6)address->Address[0].Address)->sin6_scope_id =
-		    RemoteAddr->addr.in6.scope_id;
-		transport = Transport;
-	} else {
-		DbgPrint("Unknown Address Family!\n");
-		return STATUS_INVALID_PARAMETER;
-	}
-
-	if (transport == NULL) {
-		DbgPrint("No Transport, family=%d\n", RemoteAddr->family);
-		return STATUS_INVALID_PARAMETER;
-	}
-	DbgPrint("hoge#1\n");
 	irp = TdiBuildInternalDeviceControlIrp(TDI_SEND_DATAGRAM,
-	    RawIPObject,
-	    transport,
+	    deviceObject,
+	    TpObject,
 	    NULL,
 	    NULL);
-	DbgPrint("hoge#2\n");
 	if (irp == NULL) {
-		DbgPrint("TdiBuildInternalDeviceControlIrp == NULL\n");
+		DbgPrint("TdiBuildInternalDeviceControlIrp failed\n");
 		status = STATUS_INSUFFICIENT_RESOURCES;
-		goto done;
+		goto error;
 	}
-	DbgPrint("hoge#3\n");
 
-	mdl = IoAllocateMdl(pkt, sizeof(Tsdu), FALSE, FALSE, NULL);
-	if (mdl == NULL) {
-		DbgPrint( "IoAllocateMdl == NULL\n" );
-		goto done;
-	}
-	DbgPrint("hoge#4\n");
-	__try {
-		MmProbeAndLockPages(mdl, KernelMode, IoModifyAccess);
-
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-		IoFreeMdl(mdl);
-		mdl = NULL;
-	}
-	DbgPrint("hoge#5\n");
-	if (mdl == NULL) {
-		DbgPrint( "IoAllocateMdl == NULL\n" );
-		goto done;
+	for (buffer = firstBuffer; buffer != NULL; buffer = nextBuffer) {
+		NdisGetNextBuffer(buffer, &nextBuffer);
+		try {
+			MmProbeAndLockPages((PMDL)buffer, KernelMode, IoModifyAccess);
+		} except ( EXCEPTION_EXECUTE_HANDLER ) {
+			goto error;
+		}
 	}
 
 	TdiBuildSendDatagram(irp,
-	    RawIPObject,
-	    transport,
+	    deviceObject,
+	    TpObject,
 	    NULL,
 	    NULL,
-	    mdl,
-	    sizeof(Tsdu),
+	    (PMDL)firstBuffer,
+	    packetLength,
 	    connectInfo);
-	DbgPrint("hoge#6\n");
-#if 0
-	TAILQ_FOREACH(buffer, BufferChain, next) {
-		if (buffer == BufferChain->tqh_first)
-			continue;
-		buffer->mdl = IoAllocateMdl(buffer->p,
-		    buffer->length,
-		    TRUE,
-		    FALSE,
-		    irp);
-		if (buffer->mdl == NULL) {
-			goto done;
-		}
-	}
-	TAILQ_FOREACH(buffer, BufferChain, next) {
-		try {
-			MmProbeAndLockPages(buffer->mdl, KernelMode, IoModifyAccess);
-		} except ( EXCEPTION_EXECUTE_HANDLER ) {
-			goto error_mdl;
-		}
-	}
-#endif
-	DbgPrint("hoge#7\n");
+
 	KeInitializeEvent(&event, NotificationEvent, FALSE);
 	irp->UserEvent = &event;
 	irp->UserIosb = &statusBlock;
-	status = IoCallDriver(RawIPObject, irp);
-	DbgPrint("hoge#8\n");
+
+	status = IoCallDriver(deviceObject, irp);
 	if (status == STATUS_PENDING) {
 		KeWaitForSingleObject(&event, Executive, KernelMode, TRUE, NULL);
 	}
-	DbgPrint("hoge#9\n");
 	status = statusBlock.Status;
-	if (status == STATUS_SUCCESS) {
-		DbgPrint( "status == STATUS_SUCCESS\n" );
+	if (status != STATUS_SUCCESS) {
+		DbgPrint("IoCallDriver failed, code=%d\n", status);
 	}
 
-done:
-	ExFreePool(connectInfo);
+	NdisFreePacket(pkt->ndis_packet);
 	ExFreePool(pkt);
-	return status;
 
-error_mdl:
-	DbgPrint("error_mdl\n");
-	if (mdl != NULL) {
-		IoFreeMdl(mdl);
-	}
 	ExFreePool(connectInfo);
-	return STATUS_INSUFFICIENT_RESOURCES;
+	DbgPrint("Leave from SCTPSendDatagram\n");
+	return status;
+error:
+	SCTP_HEADER_FREE(pkt);
+	if (buffer != NULL) {
+		failedBuffer = buffer;
+		for (buffer = firstBuffer; buffer != NULL && buffer != failedBuffer; buffer = nextBuffer) {
+			NdisGetNextBuffer(buffer, &nextBuffer);
+			MmUnlockPages((PMDL)buffer);
+		}
+	}
+
+	ExFreePool(connectInfo);
+	DbgPrint("Leave from SCTPSendDatagram#2\n");
+	return status;
 }
-#endif
+
+
+NTSTATUS
+SCTPSendDatagram6(
+    IN struct mpkt *pkt,
+    IN struct in6_addr *dest,
+    IN ULONG scopeId)
+{
+	PTDI_CONNECTION_INFORMATION connectInfo;
+	PTA_IP6_ADDRESS taAddress6;
+	PDEVICE_OBJECT deviceObject;
+	PIRP irp;
+	KEVENT event;
+	IO_STATUS_BLOCK statusBlock;
+	NTSTATUS status;
+	PNDIS_BUFFER buffer = NULL, firstBuffer, nextBuffer, failedBuffer;
+	ULONG packetLength = 0;
+
+	DbgPrint("Enter into SCTPSendDatagram6\n");
+
+	NdisQueryPacket(pkt->ndis_packet, NULL, NULL, &firstBuffer, &packetLength);
+
+	connectInfo = (PTDI_CONNECTION_INFORMATION)ExAllocatePool(NonPagedPool,
+	    sizeof(TDI_CONNECTION_INFORMATION) +
+	    sizeof(TA_IP6_ADDRESS));
+	if (connectInfo == NULL) {
+		DbgPrint("No memory for PTDI_CONNECTION_INFORMATION\n");
+		status = STATUS_INSUFFICIENT_RESOURCES;
+		goto error;
+	}
+
+	RtlZeroMemory(connectInfo,
+	    sizeof(TDI_CONNECTION_INFORMATION) + sizeof(TA_IP6_ADDRESS));
+	connectInfo->RemoteAddressLength = sizeof(TA_IP6_ADDRESS);
+	connectInfo->RemoteAddress = (PUCHAR)connectInfo +
+	    sizeof(TDI_CONNECTION_INFORMATION);
+	taAddress6 = (PTA_IP6_ADDRESS)connectInfo->RemoteAddress;
+	taAddress6->TAAddressCount = 1;
+	taAddress6->Address[0].AddressLength = sizeof(TDI_ADDRESS_IP6);
+	taAddress6->Address[0].AddressType = TDI_ADDRESS_TYPE_IP6;
+	RtlCopyMemory(&((PTDI_ADDRESS_IP6)taAddress6->Address[0].Address)->sin6_addr,
+	    dest, sizeof(struct in6_addr));
+	((PTDI_ADDRESS_IP6)taAddress6->Address[0].Address)->sin6_scope_id = scopeId;
+	
+	deviceObject = IoGetRelatedDeviceObject(Tp6Object);
+
+	irp = TdiBuildInternalDeviceControlIrp(TDI_SEND_DATAGRAM,
+	    deviceObject,
+	    Tp6Object,
+	    NULL,
+	    NULL);
+	if (irp == NULL) {
+		DbgPrint("TdiBuildInternalDeviceControlIrp failed\n");
+		status = STATUS_INSUFFICIENT_RESOURCES;
+		goto error;
+	}
+
+	for (buffer = firstBuffer; buffer != NULL; buffer = nextBuffer) {
+		NdisGetNextBuffer(buffer, &nextBuffer);
+		try {
+			MmProbeAndLockPages((PMDL)buffer, KernelMode, IoModifyAccess);
+		} except ( EXCEPTION_EXECUTE_HANDLER ) {
+			goto error;
+		}
+	}
+
+	TdiBuildSendDatagram(irp,
+	    deviceObject,
+	    Tp6Object,
+	    NULL,
+	    NULL,
+	    (PMDL)firstBuffer,
+	    packetLength,
+	    connectInfo);
+
+	KeInitializeEvent(&event, NotificationEvent, FALSE);
+	irp->UserEvent = &event;
+	irp->UserIosb = &statusBlock;
+
+	status = IoCallDriver(deviceObject, irp);
+	if (status == STATUS_PENDING) {
+		KeWaitForSingleObject(&event, Executive, KernelMode, TRUE, NULL);
+	}
+	status = statusBlock.Status;
+	if (status != STATUS_SUCCESS) {
+		DbgPrint("IoCallDriver failed, code=%d\n", status);
+	}
+
+	NdisFreePacket(pkt->ndis_packet);
+	ExFreePool(pkt);
+
+	ExFreePool(connectInfo);
+	DbgPrint("Leave from SCTPSendDatagram6\n");
+	return status;
+error:
+	SCTP_HEADER_FREE(pkt);
+	if (buffer != NULL) {
+		failedBuffer = buffer;
+		for (buffer = firstBuffer; buffer != NULL && buffer != failedBuffer; buffer = nextBuffer) {
+			NdisGetNextBuffer(buffer, &nextBuffer);
+			MmUnlockPages((PMDL)buffer);
+		}
+	}
+
+	ExFreePool(connectInfo);
+	DbgPrint("Leave from SCTPSendDatagram6#2\n");
+	return status;
+}
 
 
 NTSTATUS
@@ -669,10 +744,12 @@ SCTPReceiveDatagram(
     IN PVOID Tsdu,
     OUT PIRP *IoRequestPacket)
 {
-	int i;
+	unsigned int i;
+	struct mpkt *pkt;
+	struct mbuf *m;
 
-	DbgPrint("ReceiveDatagram( BytesAvailable => %d ):\n", BytesAvailable);
-	DbgPrint("ReceiveDatagram( OptionsLength => %d ):\n", OptionsLength);
+	DbgPrint("SCTPReceiveDatagram( BytesAvailable => %d ):\n", BytesAvailable);
+	DbgPrint("SCTPReceiveDatagram( OptionsLength => %d ):\n", OptionsLength);
 	
 	for (i = 0; i < BytesAvailable; i++) {
 		DbgPrint("%0.2X", ((UCHAR *)Tsdu)[i]);
@@ -682,6 +759,24 @@ SCTPReceiveDatagram(
 			DbgPrint("\n");
 	}
 	DbgPrint("\n");
+
+	pkt = SCTP_GET_HEADER_FOR_OUTPUT(BytesAvailable);
+	if (pkt == NULL) {
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	m = SCTP_HEADER_TO_CHAIN(pkt);
+	RtlCopyMemory(SCTP_BUF_AT(m, 0), Tsdu, BytesAvailable);
+	SCTP_BUF_SET_LEN(m, BytesAvailable);
+
+	KeWaitForMutexObject(&inq->mtx, Executive, KernelMode, FALSE, NULL);
+	if (inq->tail == NULL) {
+		inq->head = pkt;
+	} else {
+		inq->tail->pkt_next = pkt;
+	}
+	inq->tail = pkt;
+	KeReleaseMutex(&inq->mtx, 0);
+	KeSetEvent(&RcvContext->event, IO_NO_INCREMENT, FALSE);
 
 	return STATUS_SUCCESS;
 }
@@ -700,12 +795,16 @@ SCTPReceiveDatagram6(
     IN PVOID Tsdu,
     OUT PIRP *IoRequestPacket)
 {
-	int i;
+	struct mpkt *pkt;
+	struct mbuf *m;
+	unsigned int i;
+	struct ip6_hdr *ip6h;
+
 	PTA_IP6_ADDRESS taAddr;
 	struct in6_pktinfo_option *pkt6info;
 
-	DbgPrint("ReceiveDatagram( BytesAvailable => %d ):\n", BytesAvailable);
-	DbgPrint("ReceiveDatagram( OptionsLength => %d ):\n", OptionsLength);
+	DbgPrint("SCTPReceiveDatagram6( BytesAvailable => %d ):\n", BytesAvailable);
+	DbgPrint("SCTPReceiveDatagram6( OptionsLength => %d ):\n", OptionsLength);
 	
 	for (i = 0; i < BytesAvailable; i++) {
 		DbgPrint("%0.2X", ((UCHAR *)Tsdu)[i]);
@@ -740,5 +839,85 @@ SCTPReceiveDatagram6(
 		}
 		DbgPrint("%%%d\n", pkt6info->ipi6_ifindex);
 	}
+
+	pkt = SCTP_GET_HEADER_FOR_OUTPUT(BytesAvailable + sizeof(*ip6h));
+	if (pkt == NULL) {
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+	m = SCTP_HEADER_TO_CHAIN(pkt);
+
+	ip6h = mtod(m, struct ip6_hdr *);
+	RtlZeroMemory(ip6h, sizeof(*ip6h));
+	ip6h->ip6_vfc = (IPV6_VERSION & IPV6_VERSION_MASK);
+	ip6h->ip6_hlim = 255;
+	ip6h->ip6_plen = htons((USHORT)BytesAvailable);
+	ip6h->ip6_nxt = IPPROTO_SCTP;
+	RtlCopyMemory(&ip6h->ip6_src, &((PTA_IP6_ADDRESS)SourceAddress)->Address[0].Address[0].sin6_addr,
+	    sizeof(struct in6_addr));
+	RtlCopyMemory(&ip6h->ip6_dst, &((struct in6_pktinfo_option *)Options)->ipi6_addr,
+	    sizeof(struct in6_addr));
+	
+	RtlCopyMemory(SCTP_BUF_AT(m, sizeof(*ip6h)), Tsdu, BytesAvailable);
+	SCTP_BUF_SET_LEN(m, BytesAvailable);
+
+	KeWaitForMutexObject(&inq->mtx, Executive, KernelMode, FALSE, NULL);
+	if (inq->tail == NULL) {
+		inq->head = pkt;
+	} else {
+		inq->tail->pkt_next = pkt;
+	}
+	inq->tail = pkt;
+	KeReleaseMutex(&inq->mtx, 0);
+	KeSetEvent(&RcvContext->event, IO_NO_INCREMENT, FALSE);
+
 	return STATUS_SUCCESS;
+}
+
+VOID
+SCTPReceiveThread(IN PVOID _ctx)
+{
+	struct RcvContext *ctx = _ctx;
+	struct mpkt *pkt = NULL;
+	struct ip *iph;
+
+	DbgPrint("SCTPReceiveThread: start\n");
+	while (ctx->bActive == TRUE) {
+		DbgPrint("SCTPReceiveThread: before sleep\n");
+		KeWaitForSingleObject(&ctx->event,
+		    Executive,
+		    KernelMode,
+		    FALSE,
+		    NULL);
+		DbgPrint("SCTPReceiveThread: after sleep\n");
+		for (;;) {
+			KeWaitForMutexObject(&inq->mtx,
+			    Executive,
+			    KernelMode,
+			    FALSE,
+			    NULL);
+			pkt = inq->head;
+			if (pkt != NULL) {
+				inq->head = pkt->pkt_next;
+				if (inq->head == NULL) {
+					inq->tail = NULL;
+				}
+				pkt->pkt_next = NULL;
+			}
+			KeReleaseMutex(&inq->mtx, 0);
+
+			if (pkt == NULL) {
+				break;
+			}
+			iph = mtod(SCTP_HEADER_TO_CHAIN(pkt), struct ip *);
+			if (iph->ip_v == IPVERSION) {
+				DbgPrint("before sctp_input\n");
+				sctp_input(pkt, 20);
+				DbgPrint("after sctp_input\n");
+			} else if (iph->ip_v == (IPV6_VERSION >> 4)) {
+				DbgPrint("before sctp6_input\n");
+				DbgPrint("after sctp6_input\n");
+			}
+		}
+	}
+	DbgPrint("SCTPReceiveThread: end\n");
 }

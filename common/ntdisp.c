@@ -21,9 +21,9 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntdisp.c,v 1.1 2007/03/07 15:05:05 kozuka Exp $
+ * $Id: ntdisp.c,v 1.2 2007/03/16 12:14:40 kozuka Exp $
  */
-#include "sctp_common.h"
+#include "globals.h"
 
 NTSTATUS
 SCTPCreate(
