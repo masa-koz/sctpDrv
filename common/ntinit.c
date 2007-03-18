@@ -21,13 +21,14 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntinit.c,v 1.4 2007/03/16 17:13:15 kozuka Exp $
+ * $Id: ntinit.c,v 1.5 2007/03/18 19:25:04 kozuka Exp $
  */
 #include "globals.h"
 
 #include <netinet/sctp_os_windows.h>
 #include <netinet/sctp_var.h>
 #include <netinet/sctp_pcb.h>
+#include <netinet/sctp_addr.h>
 
 #define RawIPDeviceWithSCTP L"\\Device\\RawIP\\132"
 #define RawIP6DeviceWithSCTP L"\\Device\\RawIp6\\132"
@@ -67,6 +68,8 @@ struct ifqueue {
 
 PFILE_OBJECT TpObject, Tp6Object, RcvObject;
 HANDLE TpHandle, Tp6Handle, RcvHandle, BindingHandle;
+struct ifnethead ifnet;
+KMUTEX *ifnet_mtx;
 
 NTSTATUS
 DriverEntry(
@@ -86,6 +89,9 @@ DriverEntry(
 
 	DbgPrint("Enter into DriverEntry\n");
 
+	TAILQ_INIT(&ifnet);
+	IFNET_LOCK_INIT();
+
 	RtlZeroMemory(&ClientInterfaceInfo, sizeof(ClientInterfaceInfo));
 	RtlInitUnicodeString(&clientName, L"HKLM\\System\\CCS\\Services\\Sctp");
 	ClientInterfaceInfo.MajorTdiVersion = TDI_CURRENT_MAJOR_VERSION;
@@ -101,13 +107,16 @@ DriverEntry(
 		BindingHandle = NULL;
 		goto error;
 	}
+#if 0
 	sctp_init();
+#endif
 
-	for ( i = 0; i < IRP_MJ_MAXIMUM_FUNCTION; i++ ) {
+	for (i = 0; i < IRP_MJ_MAXIMUM_FUNCTION; i++) {
 		DriverObject->MajorFunction[i] = SCTPDispatch;
 	}
 	DriverObject->DriverUnload = Unload;
 
+#if 0
 	status = OpenRawSctp(AF_INET, &TpHandle, &TpObject);
 	if (status != STATUS_SUCCESS) {
 		DbgPrint("OpenRawSCTP(AF_INET) failed, code=%d\n", status);
@@ -153,6 +162,7 @@ DriverEntry(
 		    NULL);
 		ZwClose(RcvHandle);
 	}
+#endif
 
 	DbgPrint("Leave from DriverEntry#1\n");
 
@@ -210,24 +220,98 @@ ClientPnPAddNetAddress(
     IN PTDI_PNP_CONTEXT Context)
 {
 	unsigned char *p;
+	struct ifnet *ifp;
+	struct ifaddr *ifa;
 
-	DbgPrint("ClientPnPAddNetAddress\n");
+	DbgPrint("ClientPnPAddNetAddress: DeviceName=%ws\n", DeviceName->Buffer);
+
+	if (Address->AddressType != TDI_ADDRESS_TYPE_IP &&
+	    Address->AddressType != TDI_ADDRESS_TYPE_IP6) {
+		return;
+	}
+
 	switch (Address->AddressType) {
 	case TDI_ADDRESS_TYPE_IP:
 		p = (unsigned char *)&((PTDI_ADDRESS_IP)Address->Address)->in_addr;
-		DbgPrint("DeviceName => %ws\n", DeviceName->Buffer);
 		DbgPrint("IPv4 address: %u.%u.%u.%u\n",
 		    p[0], p[1], p[2], p[3]);
 		break;
 	case TDI_ADDRESS_TYPE_IP6:
-		DbgPrint("DeviceName => %ws\n", DeviceName->Buffer);
 		DbgPrint("IPv6 address: %s%%%d\n",
 		    ip6_sprintf((struct in6_addr *)&((PTDI_ADDRESS_IP6)Address->Address)->sin6_addr),
 		    ((PTDI_ADDRESS_IP6)Address->Address)->sin6_scope_id);
 		break;
-	default:
+	}
+
+	IFNET_WLOCK();
+	TAILQ_FOREACH(ifp, &ifnet, if_link) {
+		if (RtlCompareUnicodeString(DeviceName, &ifp->if_xname, TRUE) == 0) {
+			break;
+		}
+	}
+	if (ifp == NULL) {
+		/* New interface */
+		ifp = ExAllocatePool(NonPagedPool, sizeof(*ifp));
+		if (ifp == NULL) {
+			DbgPrint("ClientPnPAddNetAddress: Resource unavailable\n");
+			return;
+		}
+		RtlZeroMemory(ifp, sizeof(*ifp));
+		RtlInitUnicodeString(&ifp->if_xname, DeviceName->Buffer);
+		TAILQ_INIT(&ifp->if_addrhead);
+		IF_LOCK_INIT(ifp);
+		ifp->refcount = 1;
+
+		TAILQ_INSERT_TAIL(&ifnet, ifp, if_link);
+	}
+	IFNET_WUNLOCK();
+	IF_LOCK(ifp);
+
+	TAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
+		if ((Address->AddressType == TDI_ADDRESS_TYPE_IP &&
+		    ifa->ifa_addr.ss_family == AF_INET &&
+		    ((PTDI_ADDRESS_IP)Address->Address)->in_addr == ((struct sockaddr_in *)&ifa->ifa_addr)->sin_addr.s_addr) ||
+		    (Address->AddressType == TDI_ADDRESS_TYPE_IP6 &&
+		    ifa->ifa_addr.ss_family == AF_INET6 &&
+		    RtlCompareMemory(&((PTDI_ADDRESS_IP6)Address->Address)->sin6_addr,
+			&((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_addr, sizeof(struct in6_addr)))) {
+			break;
+		}
+	}
+	if (ifa != NULL) {
+		DbgPrint("Already exists....\n");
+		IF_UNLOCK(ifp);
+		return;
+	}
+
+	ifa = ExAllocatePool(NonPagedPool, sizeof(*ifa));
+	if (ifa == NULL) {
+		DbgPrint("ClientPnPAddNetAddress: Resource unavailable#2\n");
+		IF_UNLOCK(ifp);
+		return;
+	}
+	RtlZeroMemory(ifa, sizeof(*ifa));
+	IFA_LOCK_INIT(ifa);
+	ifa->refcount = 1;
+
+	switch (Address->AddressType) {
+	case TDI_ADDRESS_TYPE_IP:
+		ifa->ifa_addr.ss_family = AF_INET;
+		RtlCopyMemory(&((struct sockaddr_in *)&ifa->ifa_addr)->sin_addr,
+		    &((PTDI_ADDRESS_IP)Address->Address)->in_addr,
+		    sizeof(struct in_addr));
+		break;
+	case TDI_ADDRESS_TYPE_IP6:
+		ifa->ifa_addr.ss_family = AF_INET6;
+		RtlCopyMemory(&((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_addr,
+		    &((PTDI_ADDRESS_IP6)Address->Address)->sin6_addr,
+		    sizeof(struct in6_addr));
+		((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_scope_id = 
+		    ((PTDI_ADDRESS_IP6)Address->Address)->sin6_scope_id;
 		break;
 	}
+	TAILQ_INSERT_TAIL(&ifp->if_addrhead, ifa, ifa_link);
+	IF_UNLOCK(ifp);
 }
 
 VOID
@@ -237,24 +321,70 @@ ClientPnPDelNetAddress(
     IN PTDI_PNP_CONTEXT Context)
 {
 	unsigned char *p;
+	struct ifnet *ifp;
+	struct ifaddr *ifa;
 
-	DbgPrint("ClientPnPDelNetAddress\n");
+	DbgPrint("ClientPnPDelNetAddress: DeviceName=%ws\n", DeviceName->Buffer);
+
+	if (Address->AddressType != TDI_ADDRESS_TYPE_IP &&
+	    Address->AddressType != TDI_ADDRESS_TYPE_IP6) {
+		return;
+	}
+
 	switch (Address->AddressType) {
 	case TDI_ADDRESS_TYPE_IP:
 		p = (unsigned char *)&((PTDI_ADDRESS_IP)Address->Address)->in_addr;
-		DbgPrint("DeviceName => %ws\n", DeviceName->Buffer);
 		DbgPrint("IPv4 address: %u.%u.%u.%u\n",
 		    p[0], p[1], p[2], p[3]);
 		break;
 	case TDI_ADDRESS_TYPE_IP6:
-		DbgPrint("DeviceName => %ws\n", DeviceName->Buffer);
 		DbgPrint("IPv6 address: %s%%%d\n",
 		    ip6_sprintf((struct in6_addr *)&((PTDI_ADDRESS_IP6)Address->Address)->sin6_addr),
 		    ((PTDI_ADDRESS_IP6)Address->Address)->sin6_scope_id);
 		break;
-	default:
-		break;
 	}
+
+	IFNET_RLOCK();
+	TAILQ_FOREACH(ifp, &ifnet, if_link) {
+		if (RtlCompareUnicodeString(DeviceName, &ifp->if_xname, TRUE) == 0) {
+			break;
+		}
+	}
+	if (ifp != NULL) {
+		IF_LOCK(ifp);
+	}
+	IFNET_RUNLOCK();
+	if (ifp == NULL) {
+		DbgPrint("No such device....\n");
+		return;
+	}
+
+	TAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
+		if ((Address->AddressType == TDI_ADDRESS_TYPE_IP &&
+		    ifa->ifa_addr.ss_family == AF_INET &&
+		    ((PTDI_ADDRESS_IP)Address->Address)->in_addr == ((struct sockaddr_in *)&ifa->ifa_addr)->sin_addr.s_addr) ||
+		    (Address->AddressType == TDI_ADDRESS_TYPE_IP6 &&
+		    ifa->ifa_addr.ss_family == AF_INET6 &&
+		    RtlCompareMemory(&((PTDI_ADDRESS_IP6)Address->Address)->sin6_addr,
+			&((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_addr, sizeof(struct in6_addr)))) {
+			break;
+		}
+	}
+	if (ifa == NULL) {
+		IF_UNLOCK(ifp);
+		DbgPrint("No such address....\n");
+		return;
+	} else {
+		TAILQ_REMOVE(&ifp->if_addrhead, ifa, ifa_link);
+		IFAFREE(ifa);
+		IF_UNLOCK(ifp);
+	}
+
+#if 0
+	if (TAILQ_EMPTY(&ifp->if_addrhead)) {
+		TAILQ_REMOVE(&ifnet, ifp, if_link);
+	}
+#endif
 }
 
 
