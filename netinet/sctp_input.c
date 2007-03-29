@@ -55,7 +55,6 @@ extern uint32_t sctp_debug_on;
 #define APPLE_FILE_NO 2
 #endif
 
-#if 0
 static void
 sctp_stop_all_cookie_timers(struct sctp_tcb *stcb)
 {
@@ -214,7 +213,7 @@ sctp_process_init(struct sctp_init_chunk *cp, struct sctp_tcb *stcb,
 					    stcb, SCTP_NOTIFY_DATAGRAM_UNSENT,
 					    sp);
 					if (sp->data) {
-						SCTP_BUF_FREE(sp->data);
+						SCTP_BUF_FREE_ALL(sp->data);
 						sp->data = NULL;
 					}
 					sctp_free_remote_addr(sp->net);
@@ -254,7 +253,7 @@ sctp_process_init(struct sctp_init_chunk *cp, struct sctp_tcb *stcb,
 			while(ctl) {
 				TAILQ_REMOVE(&asoc->strmin[i].inqueue, ctl, next);
 				sctp_free_remote_addr(ctl->whoFrom);
-				SCTP_BUF_FREE(ctl->data);
+				SCTP_BUF_FREE_ALL(ctl->data);
 				ctl->data = NULL;
 				sctp_free_a_readq(stcb, ctl);
 				ctl = TAILQ_FIRST(&asoc->strmin[i].inqueue);
@@ -408,8 +407,7 @@ sctp_process_init_ack(struct mbuf *m, int iphlen, int offset,
 				 */
 				struct sctp_inv_mandatory_param *mp;
 
-				SCTP_BUF_LEN(op_err) =
-				    sizeof(struct sctp_inv_mandatory_param);
+				SCTP_BUF_SET_LEN(op_err, sizeof(struct sctp_inv_mandatory_param));
 				mp = mtod(op_err,
 				    struct sctp_inv_mandatory_param *);
 				/* Subtract the reserved param */
@@ -1091,8 +1089,7 @@ sctp_process_cookie_existing(struct mbuf *m, int iphlen, int offset,
 		struct sctp_paramhdr *ph;
 
 		sctp_send_shutdown_ack(stcb, stcb->asoc.primary_destination);
-		op_err = sctp_get_mbuf_for_msg(sizeof(struct sctp_paramhdr),
-					       0, M_DONTWAIT, 1, MT_DATA);
+		SCTP_BUF_ALLOC(op_err, sizeof(struct sctp_paramhdr));
 		if (op_err == NULL) {
 			/* FOOBAR */
 			return (NULL);
@@ -1102,7 +1099,7 @@ sctp_process_cookie_existing(struct mbuf *m, int iphlen, int offset,
 		SCTP_BUF_RESV_UF(op_err, sizeof(struct sctphdr));
 		SCTP_BUF_RESV_UF(op_err,  sizeof(struct sctp_chunkhdr));
 		/* Set the len */
-		SCTP_BUF_LEN(op_err) = sizeof(struct sctp_paramhdr);
+		SCTP_BUF_SET_LEN(op_err, sizeof(struct sctp_paramhdr));
 		ph = mtod(op_err, struct sctp_paramhdr *);
 		ph->param_type = htons(SCTP_CAUSE_COOKIE_IN_SHUTDOWN);
 		ph->param_length = htons(sizeof(struct sctp_paramhdr));
@@ -1954,7 +1951,7 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 	sig = (uint8_t *) sctp_m_getptr(m_sig, 0, SCTP_SIGNATURE_SIZE, (uint8_t *) & tmp_sig);
 	if (sig == NULL) {
 		/* couldn't find signature */
-		SCTP_BUF_FREE(m_sig);
+		SCTP_BUF_FREE_ALL(m_sig);
 		return (NULL);
 	}
 	/* compare the received digest with the computed digest */
@@ -1982,10 +1979,10 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 		struct mbuf *m_at;
 
 		m_at = m;
-		while (SCTP_BUF_NEXT(m_at) != NULL) {
-			m_at = SCTP_BUF_NEXT(m_at);
+		while (SCTP_BUF_GET_NEXT(m_at) != NULL) {
+			m_at = SCTP_BUF_GET_NEXT(m_at);
 		}
-		SCTP_BUF_NEXT(m_at) = m_sig;
+		SCTP_BUF_SET_NEXT(m_at, m_sig);
 	}
 
 	if (cookie_ok == 0) {
@@ -2016,8 +2013,7 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 		struct mbuf *op_err;
 		struct sctp_stale_cookie_msg *scm;
 		uint32_t tim;
-		op_err = sctp_get_mbuf_for_msg(sizeof(struct sctp_stale_cookie_msg),
-					       0, M_DONTWAIT, 1, MT_DATA);
+		SCTP_BUF_ALLOC(op_err, sizeof(struct sctp_stale_cookie_msg));
 		if (op_err == NULL) {
 			/* FOOBAR */
 			return (NULL);
@@ -2028,7 +2024,7 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 		SCTP_BUF_RESV_UF(op_err, sizeof(struct sctp_chunkhdr));
 
 		/* Set the len */
-		SCTP_BUF_LEN(op_err) = sizeof(struct sctp_stale_cookie_msg);
+		SCTP_BUF_SET_LEN(op_err, sizeof(struct sctp_stale_cookie_msg));
 		scm = mtod(op_err, struct sctp_stale_cookie_msg *);
 		scm->ph.param_type = htons(SCTP_CAUSE_STALE_COOKIE);
 		scm->ph.param_length = htons((sizeof(struct sctp_paramhdr) +
@@ -2476,7 +2472,7 @@ sctp_handle_ecn_cwr(struct sctp_cwr_chunk *cp, struct sctp_tcb *stcb)
 			TAILQ_REMOVE(&stcb->asoc.control_send_queue, chk,
 			    sctp_next);
 			if (chk->data) {
-				SCTP_BUF_FREE(chk->data);
+				SCTP_BUF_FREE_ALL(chk->data);
 				chk->data = NULL;
 			}
 			stcb->asoc.ctrl_queue_cnt--;
@@ -2883,7 +2879,7 @@ sctp_clean_up_stream_reset(struct sctp_tcb *stcb)
 	    chk,
 	    sctp_next);
 	if (chk->data) {
-		SCTP_BUF_FREE(chk->data);
+		SCTP_BUF_FREE_ALL(chk->data);
 		chk->data = NULL;
 	}
 	asoc->ctrl_queue_cnt--;
@@ -3196,11 +3192,11 @@ sctp_handle_stream_reset(struct sctp_tcb *stcb, struct sctp_stream_reset_out_req
 	chk->no_fr_allowed = 0;
 	chk->book_size = chk->send_size = sizeof(struct sctp_chunkhdr);
 	chk->book_size_scale = 0;
-	chk->data = sctp_get_mbuf_for_msg(MCLBYTES, 0, M_DONTWAIT, 1, MT_DATA);
+	SCTP_BUF_ALLOC(chk->data, MCLBYTES);
 	if (chk->data == NULL) {
 	strres_nochunk:
 		if(chk->data) {
-			SCTP_BUF_FREE(chk->data);
+			SCTP_BUF_FREE_ALL(chk->data);
 			chk->data = NULL;
 		}
 		sctp_free_a_chunk(stcb, chk);
@@ -3218,7 +3214,7 @@ sctp_handle_stream_reset(struct sctp_tcb *stcb, struct sctp_stream_reset_out_req
 	ch->chunk_type = SCTP_STREAM_RESET;
 	ch->chunk_flags = 0;
 	ch->chunk_length = htons(chk->send_size);
-	SCTP_BUF_LEN(chk->data) = SCTP_SIZE32(chk->send_size);
+	SCTP_BUF_SET_LEN(chk->data, SCTP_SIZE32(chk->send_size));
 
 	ph = (struct sctp_paramhdr *)&sr_req->sr_req;
 	while ((size_t)chk_length >= sizeof(struct sctp_stream_reset_tsn_request)) {
@@ -3783,12 +3779,11 @@ sctp_process_control(struct mbuf *m, int iphlen, int *offset, int length,
 				struct sctp_paramhdr *phdr;
 
 				oper = NULL;
-				oper = sctp_get_mbuf_for_msg(sizeof(struct sctp_paramhdr),
-							     0, M_DONTWAIT, 1, MT_DATA);
+				SCTP_BUF_ALLOC(oper, sizeof(struct sctp_paramhdr));
 				if (oper) {
 					/* pre-reserve some space */
 					SCTP_BUF_RESV_UF(oper, sizeof(struct sctp_chunkhdr));
-					SCTP_BUF_LEN(oper) = sizeof(struct sctp_paramhdr);
+					SCTP_BUF_SET_LEN(oper, sizeof(struct sctp_paramhdr));
 					phdr = mtod(oper, struct sctp_paramhdr *);
 					phdr->param_type = htons(SCTP_CAUSE_OUT_OF_RESC);
 					phdr->param_length = htons(sizeof(struct sctp_paramhdr));
@@ -4085,11 +4080,9 @@ sctp_process_control(struct mbuf *m, int iphlen, int *offset, int length,
 
 					if (sctp_abort_if_one_2_one_hits_limit) {
 						oper = NULL;
-						oper = sctp_get_mbuf_for_msg(sizeof(struct sctp_paramhdr),
-									     0, M_DONTWAIT, 1, MT_DATA);
+						SCTP_BUF_ALLOC(oper, sizeof(struct sctp_paramhdr));
 						if (oper) {
-							SCTP_BUF_LEN(oper) =
-								sizeof(struct sctp_paramhdr);
+							SCTP_BUF_SET_LEN(oper, sizeof(struct sctp_paramhdr));
 							phdr = mtod(oper,
 								    struct sctp_paramhdr *);
 							phdr->param_type =
@@ -4364,8 +4357,7 @@ sctp_process_control(struct mbuf *m, int iphlen, int *offset, int length,
 				struct mbuf *mm;
 				struct sctp_paramhdr *phd;
 
-				mm = sctp_get_mbuf_for_msg(sizeof(struct sctp_paramhdr),
-							   0, M_DONTWAIT, 1, MT_DATA);
+				SCTP_BUF_ALLOC(mm, sizeof(struct sctp_paramhdr));
 				if (mm) {
 					phd = mtod(mm, struct sctp_paramhdr *);
 					/*
@@ -4377,13 +4369,13 @@ sctp_process_control(struct mbuf *m, int iphlen, int *offset, int length,
 					 */
 					phd->param_type =  htons(SCTP_CAUSE_UNRECOG_CHUNK);
 					phd->param_length = htons(chk_length + sizeof(*phd));
-					SCTP_BUF_LEN(mm) = sizeof(*phd);
-					SCTP_BUF_REFCOPY(SCTP_BUF_NEXT(mm), m, *offset, SCTP_SIZE32(chk_length),
+					SCTP_BUF_SET_LEN(mm, sizeof(*phd));
+					SCTP_BUF_REFCOPY(SCTP_BUF_GET_NEXT(mm), m, *offset, SCTP_SIZE32(chk_length),
 								  M_DONTWAIT);
-					if (SCTP_BUF_NEXT(mm)) {
+					if (SCTP_BUF_GET_NEXT(mm)) {
 						sctp_queue_op_err(stcb, mm);
 					} else {
-						SCTP_BUF_FREE(mm);
+						SCTP_BUF_FREE_ALL(mm);
 					}
 				}
 			}
@@ -4751,17 +4743,15 @@ trigger_send:
 	return (0);
 }
 
-#endif
 extern int sctp_no_csum_on_loopback;
-#if 0
 
 #ifdef __APPLE__
 #ifdef SCTP_DEBUG
 static void
 sctp_print_mbuf_chain(struct mbuf *m)
 {
-	for(; m; m = SCTP_BUF_NEXT(m)) {
-		printf("%p: m_len = %d\n", m, SCTP_BUF_LEN(m));
+	for(; m; m = SCTP_BUF_GET_NEXT(m)) {
+		printf("%p: m_len = %d\n", m, SCTP_BUF_GET_LEN(m));
 		if (SCTP_BUF_IS_EXTENDED(m))
 			printf("%p: extend_size = %d\n", m, SCTP_BUF_EXTEND_SIZE(m));
 	}  
@@ -4773,26 +4763,25 @@ sctp_trim_mbuf(struct mbuf *m)
 {
 	struct mbuf *n, *m0;
 	
-	while (m && SCTP_BUF_LEN(m) == 0) {
-		n = SCTP_BUF_NEXT(m);
-		SCTP_BUF_NEXT(m) = NULL;
-		sctp_m_free(m);
+	while (m && SCTP_BUF_GET_LEN(m) == 0) {
+		n = SCTP_BUF_GET_NEXT(m);
+		SCTP_BUF_SET_NEXT(m, NULL);
+		SCTP_FREE_BUF_ALL(m);
 		m = n;
 	}
 	m0 = m;
 	
-	for(; m; m = SCTP_BUF_NEXT(m)) {
-		n = SCTP_BUF_NEXT(m);
-		while (n && SCTP_BUF_LEN(n) == 0) {
-			SCTP_BUF_NEXT(m) = SCTP_BUF_NEXT(n);
-			SCTP_BUF_NEXT(n) = NULL;
-			sctp_m_free(n);
-			n = SCTP_BUF_NEXT(m);
+	for(; m; m = SCTP_BUF_GET_NEXT(m)) {
+		n = SCTP_BUF_GET_NEXT(m);
+		while (n && SCTP_BUF_GET_LEN(n) == 0) {
+			SCTP_BUF_SET_NEXT(m, SCTP_BUF_GET_NEXT(n));
+			SCTP_BUF_SET_NEXT(n, NULL);
+			SCTP_BUF_FREE_ALL(n);
+			n = SCTP_BUF_GET_NEXT(m);
 		}
 	}
 	return m0;
 }
-#endif
 #endif
 
 #if defined(__FreeBSD__) || defined(__APPLE__)
@@ -4872,7 +4861,7 @@ sctp_input(i_pak, ap)
 		if (SCTP_BUF_IS_EXTENDED(mat)) {
 			sctp_log_mb(mat, SCTP_MBUF_INPUT);
 		}
-		mat = SCTP_BUF_NEXT(mat);
+		mat = SCTP_BUF_GET_NEXT(mat);
 	}
 #endif
 	if ((size_t)iphlen > sizeof(struct ip)) {
@@ -4886,7 +4875,7 @@ sctp_input(i_pak, ap)
 	 */
 	ip = mtod(m, struct ip *);
 	offset = iphlen + sizeof(*sh) + sizeof(*ch);
-#if 0
+#if !defined(__Windows__)
 	if (SCTP_BUF_LEN(m) < offset) {
 		if ((m = m_pullup(m, offset)) == 0) {
 			SCTP_STAT_INCR(sctps_hdrops);
@@ -4905,7 +4894,6 @@ sctp_input(i_pak, ap)
 	if (IN_MULTICAST(ntohl(ip->ip_dst.s_addr)))
 #endif
 	{
-		DbgPrint("bad#1\n");
 		goto bad;
 	}
 	if (((ch->chunk_type == SCTP_INITIATION) ||
@@ -4916,13 +4904,11 @@ sctp_input(i_pak, ap)
 		 * front state, All others we will 
 		 * not have a tcb for anyway.
 		 */
-		DbgPrint("bad#2\n");
  		goto bad;
 	}
 	/* destination port of 0 is illegal, based on RFC2960. */
 	if (sh->dest_port == 0) {
 		SCTP_STAT_INCR(sctps_hdrops);
-		DbgPrint("bad#3\n");
 		goto bad;
 	}
 	/* validate SCTP checksum */
@@ -4951,15 +4937,9 @@ sctp_input(i_pak, ap)
 			}
 #endif
 
-#if 0
 			stcb = sctp_findassociation_addr(m, iphlen,
 			    offset - sizeof(*ch),
 			    sh, ch, &inp, &net);
-#else
-			stcb = NULL;
-			inp = NULL;
-#endif
-#if 0
 			if ((inp) && (stcb)) {
 				sctp_send_packet_dropped(stcb, net, m, iphlen, 1);
 				sctp_chunk_output(inp, stcb, SCTP_OUTPUT_FROM_INPUT_ERROR);
@@ -4972,7 +4952,6 @@ sctp_input(i_pak, ap)
 				SCTP_SOCKET_UNLOCK(SCTP_INP_SO(inp), 1);
 #endif
 			}
-#endif
 			SCTP_STAT_INCR(sctps_badsum);
 			SCTP_STAT_INCR_COUNTER32(sctps_checksumerrors);
 			goto bad;
@@ -4988,24 +4967,16 @@ sctp_skip_csum_4:
 	/* Open BSD gives us the len in network order, fix it */
 	NTOHS(ip->ip_len);
 #endif
-	DbgPrint("mlen => %d, ip->ip_len => %d, iphlen => %d\n",
-	    mlen, ip->ip_len, iphlen);
 	if (mlen < (ip->ip_len - iphlen)) {
 		SCTP_STAT_INCR(sctps_hdrops);
-		DbgPrint("bad#4\n");
 		goto bad;
 	}
 	/*
 	 * Locate pcb and tcb for datagram sctp_findassociation_addr() wants
 	 * IP/SCTP/first chunk header...
 	 */
-#if 0
 	stcb = sctp_findassociation_addr(m, iphlen, offset - sizeof(*ch),
 	    sh, ch, &inp, &net);
-#else
-	inp = NULL;
-	stcb = NULL;
-#endif
 	/* inp's ref-count increased && stcb locked */
 	if (inp == NULL) {
 		struct sctp_init_chunk *init_chk, chunk_buf;
@@ -5017,7 +4988,6 @@ sctp_skip_csum_4:
 		 * same as an ICMP message.
 		 */
 		if (badport_bandlim(0) < 0) {
-			DbgPrint("bad#5\n");
 			goto bad;
 		}
 #endif				/* ICMP_BANDLIM */
@@ -5038,7 +5008,6 @@ sctp_skip_csum_4:
 			if (init_chk != NULL)
 				sh->v_tag = init_chk->init.initiate_tag;
 		}
-#if 0
 		if (ch->chunk_type == SCTP_SHUTDOWN_ACK) {
 			sctp_send_shutdown_complete2(m, iphlen, sh);
  			goto bad;
@@ -5046,10 +5015,8 @@ sctp_skip_csum_4:
 		if(ch->chunk_type == SCTP_SHUTDOWN_COMPLETE) {
 			goto bad;
 		}
-#endif
  		if(ch->chunk_type != SCTP_ABORT_ASSOCIATION)
  			sctp_send_abort(m, iphlen, sh, 0, NULL);
-		DbgPrint("bad#6\n");
 		goto bad;
 	} else if (stcb == NULL) {
 		refcount_up = 1;
@@ -5149,15 +5116,14 @@ sctp_skip_csum_4:
 	s = splsoftnet();
 #endif
 	
-#if 0
-	sctp_common_input_processing(&i_pak, iphlen, offset, length, sh, ch,
+	sctp_common_input_processing(&m, iphlen, offset, length, sh, ch,
 	    inp, stcb, net, ecn_bits);
-#endif
 	/* inp's ref-count reduced && stcb unlocked */
 #if defined(__NetBSD__) || defined(__OpenBSD__)
 	splx(s);
 #endif
-	if (i_pak) {
+	if (m == NULL) {
+		SCTP_HEADER_TO_CHAIN(i_pak) = NULL;
 		SCTP_HEADER_FREE(i_pak);
 	}
 	if ((inp) && (refcount_up)) {

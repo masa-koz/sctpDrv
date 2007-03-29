@@ -68,76 +68,144 @@
  * SCTP_INP_INFO_RLOCK() and then when we want to add a new association to
  * the sctppcbinfo list's we will do a SCTP_INP_INFO_WLOCK().
  */
-#ifdef __FreeBSD__
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_lock_bsd.h,v 1.3 2006/12/14 17:02:54 rrs Exp $");
-#endif
-
-
 extern struct sctp_foo_stuff sctp_logoff[];
 extern int sctp_logoff_stuff;
 
-#define SCTP_IPI_COUNT_INIT()
+#ifdef SCTP_LOCK_LOGGING
+#define _SCTP_LOCK_LOGGING	1
+#else
+#define _SCTP_LOCK_LOGGING	0
+#endif
 
-#define SCTP_STATLOG_INIT_LOCK() do { \
-	sctppcbinfo.logging_mtx = ExAllocatePool(NonPagedPool, sizeof(*sctppcbinfo.logging_mtx)); \
-	KeInitializeMutex(sctppcbinfo.logging_mtx, 0); \
-} while (0)
-#define SCTP_STATLOG_LOCK() \
-	KeWaitForMutexObject(sctppcbinfo.logging_mtx, Executive, KernelMode, \
-	    FALSE, NULL)
-#define SCTP_STATLOG_UNLOCK() \
-	KeReleaseMutex(sctppcbinfo.logging_mtx, 0)
+#define SCTP_IPI_COUNT_INIT()
+#define SCTP_IPI_COUNT_DESTROY()
+
+#define SCTP_STATLOG_INIT_LOCK()
 #define SCTP_STATLOG_DESTROY()
+#define SCTP_STATLOG_LOCK()
+#define SCTP_STATLOG_UNLOCK()
 #define SCTP_STATLOG_GETREF(x) do { \
-	KeWaitForMutexObject(sctppcbinfo.logging_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	x = global_sctp_cwnd_log_at; \
-	global_sctp_cwnd_log_at++; \
-	if (global_sctp_cwnd_log_at == SCTP_STAT_LOG_SIZE) { \
-		global_sctp_cwnd_log_at = 0; \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_STATLOG_GETREF: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	(x) = atomic_fetchadd_int(&global_sctp_cwnd_log_at, 1); \
+	if ((x) == SCTP_STAT_LOG_SIZE) { \
+		global_sctp_cwnd_log_at = 1; \
+		(x) = 0; \
 		global_sctp_cwnd_log_rolled = 1; \
 	} \
-	KeReleaseMutex(sctppcbinfo.logging_mtx, 0); \
 } while (0)
 
 #define SCTP_INP_INFO_LOCK_INIT() do { \
-	sctppcbinfo.ipi_ep_mtx = ExAllocatePool(NonPagedPool, sizeof(*(sctppcbinfo.ipi_ep_mtx))); \
-	KeInitializeMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_INFO_LOCK_INIT: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeInitializeMutex(&sctppcbinfo.ipi_ep_mtx, 0); \
 } while (0)
-#define SCTP_INP_INFO_RLOCK() \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL)
-#define SCTP_INP_INFO_WLOCK() \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL)
-#define SCTP_INP_INFO_RUNLOCK() \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0)
-#define SCTP_INP_INFO_WUNLOCK() \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0)
+
+#define SCTP_INP_INFO_LOCK_DESTROY() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_INFO_LOCK_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	if (KeReadStateMutex(&sctppcbinfo.ipi_ep_mtx) == 0) { \
+		KeReleaseMutex(&sctppcbinfo.ipi_ep_mtx, 0); \
+	} \
+} while (0)
+
+#define SCTP_INP_INFO_RLOCK() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_INFO_RLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeWaitForMutexObject(&sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
+	    FALSE, NULL); \
+} while (0)
+
+#define SCTP_INP_INFO_WLOCK() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_INFO_WLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeWaitForMutexObject(&sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
+	    FALSE, NULL); \
+} while (0)
+
+#define SCTP_INP_INFO_RUNLOCK() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_INFO_RUNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeReleaseMutex(&sctppcbinfo.ipi_ep_mtx, 0); \
+} while (0)
+
+#define SCTP_INP_INFO_WUNLOCK() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_INFO_WUNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeReleaseMutex(&sctppcbinfo.ipi_ep_mtx, 0); \
+} while (0)
+
 
 #define SCTP_IPI_ADDR_INIT() do { \
-	sctppcbinfo.ipi_addr_mtx = ExAllocatePool(NonPagedPool, sizeof(*(sctppcbinfo.ipi_addr_mtx))); \
-	KeInitializeMutex(sctppcbinfo.ipi_addr_mtx, 0); \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_IPI_ADDR_INIT: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeInitializeMutex(&sctppcbinfo.ipi_addr_mtx, 0); \
 } while (0)
-#define SCTP_IPI_ADDR_DESTROY()
-#define SCTP_IPI_ADDR_LOCK() \
-	KeWaitForMutexObject(sctppcbinfo.ipi_addr_mtx, Executive, KernelMode, \
-	    FALSE, NULL)
-#define SCTP_IPI_ADDR_UNLOCK() \
-	KeReleaseMutex(sctppcbinfo.ipi_addr_mtx, 0)
+
+#define SCTP_IPI_ADDR_DESTROY() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_IPI_ADDR_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	if (KeReadStateMutex(&sctppcbinfo.ipi_addr_mtx) == 0) { \
+		KeReleaseMutex(&sctppcbinfo.ipi_addr_mtx, 0); \
+	} \
+} while (0)
+
+#define SCTP_IPI_ADDR_LOCK() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_IPI_ADDR_LOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeWaitForMutexObject(&sctppcbinfo.ipi_addr_mtx, Executive, KernelMode, \
+	    FALSE, NULL); \
+} while (0)
+
+#define SCTP_IPI_ADDR_UNLOCK() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_IPI_ADDR_UNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeReleaseMutex(&sctppcbinfo.ipi_addr_mtx, 0); \
+} while (0)
 
 
 #define SCTP_IPI_ITERATOR_WQ_INIT() do { \
-	sctppcbinfo.ipi_iterator_wq_mtx = ExAllocatePool(NonPagedPool, sizeof(*sctppcbinfo.ipi_iterator_wq_mtx)); \
-	KeInitializeMutex(sctppcbinfo.ipi_iterator_wq_mtx, 0); \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_IPI_ITERATOR_WQ_INIT: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeInitializeMutex(&sctppcbinfo.ipi_iterator_wq_mtx, 0); \
 } while (0)
-#define SCTP_IPI_ITERATOR_WQ_DESTROY()
-#define SCTP_IPI_ITERATOR_WQ_LOCK() \
-	KeWaitForMutexObject(sctppcbinfo.ipi_iterator_wq_mtx, Executive, KernelMode, \
-	    FALSE, NULL)
-#define SCTP_IPI_ITERATOR_WQ_UNLOCK() \
-	KeReleaseMutex(sctppcbinfo.ipi_iterator_wq_mtx, 0)
+
+#define SCTP_IPI_ITERATOR_WQ_DESTROY() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_IPI_ITERATOR_WQ_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	if (KeReadStateMutex(&sctppcbinfo.ipi_iterator_wq_mtx) == 0) { \
+		KeReleaseMutex(&sctppcbinfo.ipi_iterator_wq_mtx, 0); \
+	} \
+} while (0)
+
+#define SCTP_IPI_ITERATOR_WQ_LOCK() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_IPI_ITERATOR_WQ_LOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeWaitForMutexObject(&sctppcbinfo.ipi_iterator_wq_mtx, Executive, KernelMode, \
+	    FALSE, NULL); \
+} while (0)
+
+#define SCTP_IPI_ITERATOR_WQ_UNLOCK() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_IPI_ITERATOR_WQ_UNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeReleaseMutex(&sctppcbinfo.ipi_iterator_wq_mtx, 0); \
+} while (0)
+
 
 /*
  * The INP locks we will use for locking an SCTP endpoint, so for example if
@@ -146,80 +214,123 @@ extern int sctp_logoff_stuff;
  */
 
 #define SCTP_INP_READ_INIT(_inp) do { \
-	KeInitializeMutex(&(_inp)->inp_rdata_mtx, 0)
-#define SCTP_INP_READ_DESTROY(_inp)
-#define SCTP_INP_READ_LOCK(_inp) \
-	KeWaitForMutexObject(&(_inp)->inp_rdata_mtx, Executive, KernelMode, \
-	    FALSE, NULL)
-#define SCTP_INP_READ_UNLOCK(_inp) \
-	KeReleaseMutex(&(_inp)->inp_rdata_mtx, 0)
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_READ_INIT: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	} \
+	KeInitializeMutex(&(_inp)->inp_rdata_mtx, 0); \
+} while (0)
 
-#define SCTP_INP_LOCK_INIT(_inp) \
-	KeInitializeMutex(&(_inp)->inp_mtx, 0)
-#define SCTP_INP_LOCK_DESTROY(_inp)
-#define SCTP_ASOC_CREATE_LOCK_INIT(_inp) \
-	KeInitializeMutex(&(_inp)->inp_create_mtx, 0)
-#define SCTP_ASOC_CREATE_LOCK_DESTROY(_inp)
+#define SCTP_INP_READ_DESTROY(_inp) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_READ_DESTROY: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	} \
+	if (KeReadStateMutex(&(_inp)->inp_rdata_mtx) == 0) { \
+		KeReleaseMutex(&(_inp)->inp_rdata_mtx, 0); \
+	} \
+} while (0)
+
+#define SCTP_INP_READ_LOCK(_inp) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_READ_LOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	} \
+	KeWaitForMutexObject(&(_inp)->inp_rdata_mtx, Executive, KernelMode, \
+	    FALSE, NULL); \
+} while (0)
+
+#define SCTP_INP_READ_UNLOCK(_inp) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_READ_UNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	} \
+	KeReleaseMutex(&(_inp)->inp_rdata_mtx, 0); \
+} while (0)
+
+
+#define SCTP_INP_LOCK_INIT(_inp) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_LOCK_INIT: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	} \
+	KeInitializeMutex(&(_inp)->inp_mtx, 0); \
+} while (0)
+
+#define SCTP_INP_LOCK_DESTROY(_inp) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_LOCK_DESTROY: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	} \
+	if (KeReadStateMutex(&(_inp)->inp_mtx) == 0) { \
+		KeReleaseMutex(&(_inp)->inp_mtx, 0); \
+	} \
+} while (0)
 
 #ifdef SCTP_LOCK_LOGGING
 #define SCTP_INP_RLOCK(_inp) do { \
+	DbgPrint("SCTP_INP_RLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	sctp_log_lock(_inp, (struct sctp_tcb *)NULL, SCTP_LOG_LOCK_INP); \
 	KeWaitForMutexObject(&(_inp)->inp_mtx, Executive, KernelMode, \
 	    FALSE, NULL); \
 } while (0)
-#define SCTP_INP_WLOCK(_inp) do { \
-	sctp_log_lock(_inp, (struct sctp_tcb *)NULL, SCTP_LOG_LOCK_INP); \
-	KeWaitForMutexObject(&(_inp)->inp_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-} while (0)
-
 #else
-#define SCTP_INP_RLOCK(_inp) \
+#define SCTP_INP_RLOCK(_inp) do { \
 	KeWaitForMutexObject(&(_inp)->inp_mtx, Executive, KernelMode, \
-	    FALSE, NULL)
-#define SCTP_INP_WLOCK(_inp) \
-	KeWaitForMutexObject(&(_inp)->inp_mtx, Executive, KernelMode, \
-	    FALSE, NULL)
+	    FALSE, NULL); \
+} while (0)
 #endif
 
+#ifdef SCTP_LOCK_LOGGING
+#define SCTP_INP_WLOCK(_inp) do { \
+	DbgPrint("SCTP_INP_WLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	sctp_log_lock(_inp, (struct sctp_tcb *)NULL, SCTP_LOG_LOCK_INP); \
+	KeWaitForMutexObject(&(_inp)->inp_mtx, Executive, KernelMode, \
+	    FALSE, NULL); \
+} while (0)
+#else
+#define SCTP_INP_WLOCK(_inp) do { \
+	KeWaitForMutexObject(&(_inp)->inp_mtx, Executive, KernelMode, \
+	    FALSE, NULL); \
+} while (0)
+#endif
 
-#define SCTP_TCB_SEND_LOCK_INIT(_tcb) \
-	KeInitializeMutex(&(&(_tcb)->tcb_send_mtx, 0)
-#define SCTP_TCB_SEND_LOCK_DESTROY(_tcb)
-#define SCTP_TCB_SEND_LOCK(_tcb) \
-	KeWaitForMutexObject(&(_tcb)->tcb_send_mtx, Executive, KernelMode, \
-	    FALSE, NULL) 
-#define SCTP_TCB_SEND_UNLOCK(_tcb) \
-	KeReleaseMutex(&(_tcb)->tcb_send_mtx, 0)
+#define SCTP_INP_RUNLOCK(_inp) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_RUNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	} \
+	KeReleaseMutex(&(_inp)->inp_mtx, 0); \
+} while (0)
+
+#define SCTP_INP_WUNLOCK(_inp) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_INP_WUNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	} \
+	KeReleaseMutex(&(_inp)->inp_mtx, 0); \
+} while (0)
 
 #define SCTP_INP_INCR_REF(_inp) do { \
-	KeWaitForMutexObject(&(_inp)->inp_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	(_inp)->refcount++; \
-	KeReleaseMutex(&(_inp)->inp_mtx, 0); \
-} while (0)
-#define SCTP_INP_DECR_REF(_inp) do { \
-	KeWaitForMutexObject(&(_inp)->inp_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	(_inp)->refcount--; \
-	KeReleaseMutex(&(_inp)->inp_mtx, 0); \
+	atomic_add_int(&(_inp)->refcount, 1); \
 } while (0)
 
-#define SCTP_TCB_INCR_REF(_tcb) do { \
-	KeWaitForMutexObject(&(_tcb)->tcb_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	(_tcb)->asoc.refcnt++; \
-	KeReleaseMutex(&(_tcb)->tcb_mtx, 0); \
+#define SCTP_INP_DECR_REF(_inp) do { \
+	atomic_subtract_int(&(_inp)->refcount, 1); \
 } while (0)
-#define SCTP_TCB_DECR_REF(_tcb) do { \
-	KeWaitForMutexObject(&(_tcb)->tcb_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	(_tcb)->asoc.refcnt--; \
-	KeReleaseMutex(&(_tcb)->tcb_mtx, 0); \
+
+
+#define SCTP_ASOC_CREATE_LOCK_INIT(_inp) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_ASOC_CREATE_LOCK_INIT: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	} \
+	KeInitializeMutex(&(_inp)->inp_create_mtx, 0); \
+} while (0)
+
+#define SCTP_ASOC_CREATE_LOCK_DESTROY(_inp) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_ASOC_CREATE_LOCK_DESTROY: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	} \
+	if (KeReadStateMutex(&(_inp)->inp_create_mtx) == 0) { \
+		KeReleaseMutex(&(_inp)->inp_create_mtx, 0); \
+	} \
 } while (0)
 
 #ifdef SCTP_LOCK_LOGGING
 #define SCTP_ASOC_CREATE_LOCK(_inp) do { \
+	DbgPrint("SCTP_ASOC_CREATE_LOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	sctp_log_lock(_inp, (struct sctp_tcb *)NULL, SCTP_LOG_LOCK_CREATE); \
 	KeWaitForMutexObject(&(_inp)->inp_create_mtx, Executive, KernelMode, \
 	    FALSE, NULL); \
@@ -231,12 +342,13 @@ extern int sctp_logoff_stuff;
 } while (0)
 #endif
 
-#define SCTP_INP_RUNLOCK(_inp) \
-	KeReleaseMutex(&(_inp)->inp_mtx, 0)
-#define SCTP_INP_WUNLOCK(_inp) \
-	KeReleaseMutex(&(_inp)->inp_mtx, 0)
-#define SCTP_ASOC_CREATE_UNLOCK(_inp) \
-	KeReleaseMutex(&(_inp)->inp_create_mtx, 0)
+#define SCTP_ASOC_CREATE_UNLOCK(_inp) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_ASOC_CREATE_UNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
+	} \
+	KeReleaseMutex(&(_inp)->inp_create_mtx, 0); \
+} while (0)
+
 
 /*
  * For the majority of things (once we have found the association) we will
@@ -245,94 +357,126 @@ extern int sctp_logoff_stuff;
  * when we stuff data up into the receiving sb_mb. I.e. we will need to do an
  * extra SOCKBUF_LOCK(&so->so_rcv) even though the association is locked.
  */
+#define SCTP_TCB_LOCK_INIT(_tcb) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_TCB_LOCK_INIT: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
+	} \
+	KeInitializeMutex(&(_tcb)->tcb_mtx, 0); \
+} while (0)
 
-#define SCTP_TCB_LOCK_INIT(_tcb) \
-	KeInitializeMutex(&(_tcb)->tcb_mtx, 0)
-#define SCTP_TCB_LOCK_DESTROY(_tcb)
+#define SCTP_TCB_LOCK_DESTROY(_tcb) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_TCB_LOCK_DESTROY: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
+	} \
+	if (KeReadStateMutex(&(_tcb)->tcb_mtx) == 0) { \
+		KeReleaseMutex(&(_tcb)->tcb_mtx, 0); \
+	} \
+} while (0)
 
 #ifdef SCTP_LOCK_LOGGING
 #define SCTP_TCB_LOCK(_tcb) do { \
-        sctp_log_lock(_tcb->sctp_ep, _tcb, SCTP_LOG_LOCK_TCB); \
+	DbgPrint("SCTP_TCB_LOCK: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
+       	sctp_log_lock(_tcb->sctp_ep, _tcb, SCTP_LOG_LOCK_TCB); \
 	KeWaitForMutexObject(&(_tcb)->tcb_mtx, Executive, KernelMode, \
 	    FALSE, NULL); \
 } while (0)
 #else
-#define SCTP_TCB_LOCK(_tcb) \
+#define SCTP_TCB_LOCK(_tcb) do { \
 	KeWaitForMutexObject(&(_tcb)->tcb_mtx, Executive, KernelMode, \
-	    FALSE, NULL);
+	    FALSE, NULL); \
+} while (0)
 #endif
 
+__inline int SCTP_TCB_TRYLOCK(struct sctp_tcb *tcb) {
+	LARGE_INTEGER timeout;
+	if (_SCTP_LOCK_LOGGING) {
+		DbgPrint("SCTP_TCB_TRYLOCK: tcb=%p %s[%d]\n", tcb, __FILE__, __LINE__); \
+	}
+	RtlZeroMemory(&timeout, sizeof(timeout));
+	return (KeWaitForMutexObject(&tcb->tcb_mtx, Executive, KernelMode,
+	    FALSE, &timeout) == STATUS_SUCCESS) ? 1 : 0;
+}
 
-#define SCTP_TCB_TRYLOCK(_tcb) do { \
-	LARGE_INTEGER _timeout = 0; \
-	KeWaitForMutexObject(&(_tcb)->tcb_mtx, Executive, KernelMode, \
-	    FALSE, &_timeout); \
+#define SCTP_TCB_UNLOCK(_tcb) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_TCB_UNLOCK: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
+	} \
+	KeReleaseMutex(&(_tcb)->tcb_mtx, 0); \
 } while (0)
-#define SCTP_TCB_UNLOCK(_tcb) \
-	KeReleaseMutex(&(_tcb)->tcb_mtx, 0)
 
-#define SCTP_TCB_UNLOCK_IFOWNED(_tcb) \
-	KeReleaseMutex(&(_tcb)->tcb_mtx, 0) 
-
-
-#define SCTP_RADDR_INIT_REF(_net) do { \
-	KeInitializeMutex(&(&(_net)->mtx, 0)); \
-	(_net)->ref_count = 0; \
+#define SCTP_TCB_UNLOCK_IFOWNED(_tcb) do { \
+	if (KeReadStateMutex(&(_tcb)->tcb_mtx) == 0) { \
+		KeReleaseMutex(&(_tcb)->tcb_mtx, 0); \
+	} \
 } while (0)
-#define SCTP_RADDR_INCR_REF(_net) do { \
-	KeWaitForMutexObject(&(_net)->mtx, Executive, KernelMode, \
+
+#define SCTP_TCB_INCR_REF(_tcb) do { \
+	atomic_add_int((_tcb)->asoc.refcnt, 1); \
+} while (0)
+
+#define SCTP_TCB_DECR_REF(_tcb) do { \
+	atomic_subtract_int((_tcb)->asoc.refcnt, 1); \
+} while (0)
+
+
+#define SCTP_TCB_SEND_LOCK_INIT(_tcb) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_TCB_SEND_LOCK_INIT: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
+	} \
+	KeInitializeMutex(&(_tcb)->tcb_send_mtx, 0); \
+} while (0)
+
+#define SCTP_TCB_SEND_LOCK_DESTROY(_tcb) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_TCB_SEND_LOCK_DESTROY: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
+	} \
+	if (KeReadStateMutex(&(_tcb)->tcb_send_mtx) == 0) { \
+		KeReleaseMutex(&(_tcb)->tcb_send_mtx, 0); \
+	} \
+} while (0) 
+
+#define SCTP_TCB_SEND_LOCK(_tcb) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_TCB_SEND_LOCK: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
+	} \
+	KeWaitForMutexObject(&(_tcb)->tcb_send_mtx, Executive, KernelMode, \
 	    FALSE, NULL); \
-	(_net)->ref_count++; \
-	KeReleaseMutex(&(_net)->mtx, 0); \
+} while (0)
+
+#define SCTP_TCB_SEND_UNLOCK(_tcb) do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_TCB_SEND_LOCK: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
+	} \
+	KeReleaseMutex(&(_tcb)->tcb_send_mtx, 0); \
+} while (0)
+
+
+#define SCTP_RADDR_INCR_REF(_net) do { \
+	atomic_add_int(&(_net)->ref_count, 1); \
 } while (0)
 #define SCTP_RADDR_DECR_REF(_net) do { \
-	KeWaitForMutexObject(&(_net)->mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	(_net)->ref_count--; \
-	KeReleaseMutex(&(_net)->mtx, 0); \
+	atomic_subtract_int(&(_net)->ref_count, 1); \
 } while (0)
 
-#define SCTP_LADDR_INIT_REF(_ifa) do { \
-	KeInitializeMutex(&(&(_ifa)->mtx, 0)); \
-	(_ifa)->refcount = 0; \
-} while (0)
 #define SCTP_LADDR_INCR_REF(_ifa) do { \
-	KeWaitForMutexObject(&(_ifa)->mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	(_ifa)->refcount++; \
-	KeReleaseMutex(&(_ifa)->mtx, 0); \
+	atomic_add_int(&(_ifa)->refcount, 1); \
 } while (0)
 #define SCTP_LADDR_DECR_REF(_ifa) do { \
-	KeWaitForMutexObject(&(_ifa)->mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	(_ifa)->refcount--; \
-	KeReleaseMutex(&(_ifa)->mtx, 0); \
+	atomic_subtract_int(&(_ifa)->refcount, 1); \
 } while (0)
 
 #define SCTP_INCR_TCB_FREE_STRMOQ_COUNT(_tcb) do { \
-	KeWaitForMutexObject(&(_tcb)->tcb_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	(_tcb)->asoc.free_strmoq_cnt++; \
-	KeReleaseMutex(&(_tcb)->tcb_mtx, 0); \
+	atomic_add_int(&(_tcb)->asoc.free_strmoq_cnt, 1); \
 } while (0)
 #define SCTP_DECR_TCB_FREE_STRMOQ_COUNT(_tcb) do { \
-	KeWaitForMutexObject(&(_tcb)->tcb_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	(_tcb)->asoc.free_strmoq_cnt--; \
-	KeReleaseMutex(&(_tcb)->tcb_mtx, 0); \
+	atomic_subtract_int(&(_tcb)->asoc.free_strmoq_cnt, 1); \
 } while (0)
 
 #define SCTP_INCR_TCB_FREE_CHK_COUNT(_tcb) do { \
-	KeWaitForMutexObject(&(_tcb)->tcb_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	(_tcb)->asoc.free_chunk_cnt++; \
-	KeReleaseMutex(&(_tcb)->tcb_mtx, 0); \
+	atomic_add_int(&(_tcb)->asoc.free_chunk_cnt, 1); \
 } while (0)
 #define SCTP_DECR_TCB_FREE_CHK_COUNT(_tcb) do { \
-	KeWaitForMutexObject(&(_tcb)->tcb_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	(_tcb)->asoc.free_chunk_cnt--; \
-	KeReleaseMutex(&(_tcb)->tcb_mtx, 0); \
+	atomic_subtract_int(&(_tcb)->asoc.free_chunk_cnt, 1); \
 } while (0)
 
 #ifdef INVARIANTS
@@ -343,135 +487,103 @@ extern int sctp_logoff_stuff;
 #endif
 
 #define SCTP_ITERATOR_LOCK_INIT() do { \
-	sctppcbinfo.it_mtx = ExAllocatePool(NonPagedPool, sizeof(*(sctppcbinfo.it_mtx))); \
-	KeInitializeMutex(sctppcbinfo.it_mtx, 0); \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_ITERATOR_LOCK_INIT: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeInitializeMutex(&sctppcbinfo.it_mtx, 0); \
 } while (0)
+
+#define SCTP_ITERATOR_LOCK_DESTROY() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_ITERATOR_LOCK_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	if (KeReadStateMutex(&sctppcbinfo.it_mtx) == 0) { \
+		KeReleaseMutex(&sctppcbinfo.it_mtx, 0); \
+	} \
+} while (0)
+
 
 #ifdef INVARIANTS
 #define SCTP_ITERATOR_LOCK() do { \
-	_ASSERT(KeReadStateMutex(sctppcbinfo.it_mtx) == 0); \
-	KeWaitForMutexObject(sctppcbinfo.it_mtx, Executive, KernelMode, \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_ITERATOR_LOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	_ASSERT(KeReadStateMutex(&sctppcbinfo.it_mtx) == 0); \
+	KeWaitForMutexObject(&sctppcbinfo.it_mtx, Executive, KernelMode, \
 	    FALSE, NULL); \
 } while (0)
 #else
-#define SCTP_ITERATOR_LOCK() \
-	KeWaitForMutexObject(sctppcbinfo.it_mtx, Executive, KernelMode, \
-	    FALSE, NULL)
+#define SCTP_ITERATOR_LOCK() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_ITERATOR_LOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeWaitForMutexObject(&sctppcbinfo.it_mtx, Executive, KernelMode, \
+	    FALSE, NULL); \
+} while (0)
 #endif
-#define SCTP_ITERATOR_UNLOCK() \
-	KeReleaseMutex(sctppcbinfo.it_mtx, 0)
-#define SCTP_ITERATOR_LOCK_DESTROY()
 
+#define SCTP_ITERATOR_UNLOCK() do { \
+	if (_SCTP_LOCK_LOGGING) { \
+		DbgPrint("SCTP_ITERATOR_UNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeReleaseMutex(&sctppcbinfo.it_mtx, 0); \
+} while (0)
 
 #define SCTP_INCR_EP_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_ep++; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_add_int(&sctppcbinfo.ipi_count_ep, 1); \
 } while (0)
 #define SCTP_DECR_EP_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_ep--; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_subtract_int(&sctppcbinfo.ipi_count_ep, 1); \
 } while (0)
 #define SCTP_INCR_ASOC_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_asoc++; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_add_int(&sctppcbinfo.ipi_count_asoc, 1); \
 } while (0)
 #define SCTP_DECR_ASOC_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_asoc--; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_subtract_int(&sctppcbinfo.ipi_count_asoc, 1); \
 } while (0)
 #define SCTP_INCR_LADDR_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_laddr++; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_add_int(&sctppcbinfo.ipi_count_laddr, 1); \
 } while (0)
 #define SCTP_DECR_LADDR_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_laddr--; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_subtract_int(&sctppcbinfo.ipi_count_laddr, 1); \
 } while (0)
 #define SCTP_INCR_RADDR_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_raddr++; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_add_int(&sctppcbinfo.ipi_count_raddr, 1); \
 } while (0)
 #define SCTP_DECR_RADDR_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_raddr--; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_subtract_int(&sctppcbinfo.ipi_count_raddr, 1); \
 } while (0)
 #define SCTP_INCR_CHK_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_chunk++; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_add_int(&sctppcbinfo.ipi_count_chunk, 1); \
 } while (0)
 #define SCTP_DECR_CHK_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_chunk--; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_subtract_int(&sctppcbinfo.ipi_count_chunk, 1); \
 } while (0)
 #define SCTP_INCR_READQ_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_readq++; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_add_int(&sctppcbinfo.ipi_count_readq, 1); \
 } while (0)
 #define SCTP_DECR_READQ_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_readq--; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_subtract_int(&sctppcbinfo.ipi_count_readq, 1); \
 } while (0)
 
 #define SCTP_INCR_STRMOQ_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_strmoq++; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_add_int(&sctppcbinfo.ipi_count_strmoq, 1); \
 } while (0)
 #define SCTP_DECR_STRMOQ_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_count_strmoq--; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_subtract_int(&sctppcbinfo.ipi_count_strmoq, 1); \
 } while (0)
 
 #define SCTP_INCR_FREE_STRMOQ_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_free_strmoq++; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_add_int(&sctppcbinfo.ipi_free_strmoq, 1); \
 } while (0)
 #define SCTP_DECR_FREE_STRMOQ_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_free_strmoq--; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_subtract_int(&sctppcbinfo.ipi_free_strmoq, 1); \
 } while (0)
 
 #define SCTP_INCR_FREE_CHK_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_free_chunks++; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_add_int(&sctppcbinfo.ipi_free_chunks, 1); \
 } while (0)
 #define SCTP_DECR_FREE_CHK_COUNT() do { \
-	KeWaitForMutexObject(sctppcbinfo.ipi_ep_mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctppcbinfo.ipi_free_chunks--; \
-	KeReleaseMutex(sctppcbinfo.ipi_ep_mtx, 0); \
+	atomic_subtract_int(&sctppcbinfo.ipi_free_chunks, 1); \
 } while (0)
 #endif

@@ -35,9 +35,12 @@
 __FBSDID("$FreeBSD$");
 #endif
 
+#include <netinet/sctp_os.h>
 #include <netinet/sctp_sha1.h>
+#if !defined(__Windows__)
 #include <sys/param.h>
 #include <sys/systm.h>
+#endif
 void
 SHA1_Init(struct sha1_context *ctx)
 {

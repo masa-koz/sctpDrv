@@ -9,51 +9,135 @@ TAILQ_HEAD(ifaddrhead, ifaddr);
 
 struct ifnet {
 	TAILQ_ENTRY(ifnet)	if_link;
-	KMUTEX			if_mtx;
+	KSPIN_LOCK		if_spinlock;
+	KLOCK_QUEUE_HANDLE	if_lockqueue;
 	int			refcount;
 	UNICODE_STRING		if_xname;
+	int			if_index;
 	struct ifaddrhead	if_addrhead;
 };
 
 struct ifaddr {
 	TAILQ_ENTRY(ifaddr)	ifa_link;
-	KMUTEX			ifa_mtx;
+	KSPIN_LOCK		ifa_spinlock;
+	KLOCK_QUEUE_HANDLE	ifa_lockqueue;
+	struct ifnet		*ifa_ifp;
 	int			refcount;
 	struct sockaddr_storage	ifa_addr;
 };
 
+#if 0
+extern struct ifnethead ifnet;
+extern KSPIN_LOCK *ifnet_spinlock;
+extern KLOCK_QUEUE_HANDLE *ifnet_lockqueue;
+
+#define	LOCKDEBUG	1
+
 #define IFNET_LOCK_INIT() do { \
-	ifnet_mtx = ExAllocatePool(NonPagedPool, sizeof(*(ifnet_mtx))); \
-	KeInitializeMutex(ifnet_mtx, 0); \
+	ifnet_spinlock = ExAllocatePool(NonPagedPool, sizeof(KSPIN_LOCK)); \
+	ifnet_lockqueue = ExAllocatePool(NonPagedPool, sizeof(KLOCK_QUEUE_HANDLE)); \
+	KeInitializeSpinLock(ifnet_spinlock); \
 } while (0)
 
-#define IFNET_LOCK_DESTROY()
+#define IFNET_LOCK_DESTROY() do { \
+	ExFreePool(ifnet_spinlock); \
+	ExFreePool(ifnet_lockqueue); \
+} while (0)
 
 #define IFNET_WLOCK() do { \
-	DbgPrint("IFNET_WLOCK @ %d\n", __LINE__); \
-	KeWaitForMutexObject(ifnet_mtx, Executive, KernelMode,  FALSE, NULL); \
+	if (LOCKDEBUG) { \
+		DbgPrint("IFNET_WLOCK @ %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeAcquireInStackQueuedSpinLock(ifnet_spinlock, ifnet_lockqueue); \
+	if (LOCKDEBUG) { \
+		KIRQL _irql; \
+		_irql = KeGetCurrentIrql(); \
+		DbgPrint("_irql => %d\n", _irql); \
+	} \
 } while (0)
 #define IFNET_RLOCK IFNET_WLOCK
 
 #define IFNET_WUNLOCK() do { \
-	DbgPrint("IFNET_WUNLOCK @ %d\n", __LINE__); \
-	KeReleaseMutex(ifnet_mtx, 0); \
+	if (LOCKDEBUG) { \
+		DbgPrint("IFNET_WUNLOCK @ %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeReleaseInStackQueuedSpinLock(ifnet_lockqueue); \
+	if (LOCKDEBUG) { \
+		KIRQL _irql; \
+		_irql = KeGetCurrentIrql(); \
+		DbgPrint("_irql => %d\n", _irql); \
+	} \
 } while (0)
 #define IFNET_RUNLOCK IFNET_WUNLOCK
 
+#else
+extern struct ifnethead ifnet;
+extern KSPIN_LOCK ifnet_spinlock;
+extern KLOCK_QUEUE_HANDLE ifnet_lockqueue;
+
+#define	LOCKDEBUG	1
+
+#define IFNET_LOCK_INIT() do { \
+	KeInitializeSpinLock(&ifnet_spinlock); \
+} while (0)
+
+#define IFNET_LOCK_DESTROY() do { \
+} while (0)
+
+#define IFNET_WLOCK() do { \
+	if (LOCKDEBUG) { \
+		DbgPrint("IFNET_WLOCK @ %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeAcquireInStackQueuedSpinLock(&ifnet_spinlock, &ifnet_lockqueue); \
+	if (LOCKDEBUG) { \
+		KIRQL _irql; \
+		_irql = KeGetCurrentIrql(); \
+		DbgPrint("_irql => %d\n", _irql); \
+	} \
+} while (0)
+#define IFNET_RLOCK IFNET_WLOCK
+
+#define IFNET_WUNLOCK() do { \
+	if (LOCKDEBUG) { \
+		DbgPrint("IFNET_WUNLOCK @ %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeReleaseInStackQueuedSpinLock(&ifnet_lockqueue); \
+	if (LOCKDEBUG) { \
+		KIRQL _irql; \
+		_irql = KeGetCurrentIrql(); \
+		DbgPrint("_irql => %d\n", _irql); \
+	} \
+} while (0)
+#define IFNET_RUNLOCK IFNET_WUNLOCK
+#endif
+
 #define IF_LOCK_INIT(_ifp) \
-	KeInitializeMutex(&(_ifp)->if_mtx, 0)
+	KeInitializeSpinLock(&(_ifp)->if_spinlock)
 
 #define IF_LOCK_DESTROY(_ifp)
 
 #define IF_LOCK(_ifp) do { \
-	DbgPrint("IF_LOCK @ %d\n", __LINE__); \
-	KeWaitForMutexObject(&(_ifp)->if_mtx, Executive, KernelMode,  FALSE, NULL); \
+	if (LOCKDEBUG) { \
+		DbgPrint("IF_LOCK @ %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeAcquireInStackQueuedSpinLock(&(_ifp)->if_spinlock, &(_ifp)->if_lockqueue); \
+	if (LOCKDEBUG) { \
+		KIRQL _irql; \
+		_irql = KeGetCurrentIrql(); \
+		DbgPrint("_irql => %d\n", _irql); \
+	} \
 } while (0)
 
 #define IF_UNLOCK(_ifp) do { \
-	DbgPrint("IF_UNLOCK @ %d\n", __LINE__); \
-	KeReleaseMutex(&(_ifp)->if_mtx, 0); \
+	if (LOCKDEBUG) { \
+		DbgPrint("IF_UNLOCK @ %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeReleaseInStackQueuedSpinLock(&(_ifp)->if_lockqueue); \
+	if (LOCKDEBUG) { \
+		KIRQL _irql; \
+		_irql = KeGetCurrentIrql(); \
+		DbgPrint("_irql => %d\n", _irql); \
+	} \
 } while (0)
 
 #define IF_INCR_REF(_ifp) do { \
@@ -68,19 +152,44 @@ struct ifaddr {
 	IF_UNLOCK((_ifp)); \
 } while (0)
 
+#define IFFREE(_ifp) do { \
+	IF_LOCK((_ifp)); \
+	(_ifp)->refcount--; \
+	if ((_ifp)->refcount == 0) { \
+		IF_LOCK_DESTROY((_ifp)); \
+		ExFreePool((_ifp)); \
+	} else {\
+		IF_UNLOCK((_ifp)); \
+	} \
+} while (0)
+
 #define IFA_LOCK_INIT(_ifa) \
-	KeInitializeMutex(&(_ifa)->ifa_mtx, 0)
+	KeInitializeSpinLock(&(_ifa)->ifa_spinlock)
 
 #define IFA_LOCK_DESTROY(_ifa)
 
 #define IFA_LOCK(_ifa) do { \
-	DbgPrint("IFA_LOCK @ %d\n", __LINE__); \
-	KeWaitForMutexObject(&(_ifa)->ifa_mtx, Executive, KernelMode,  FALSE, NULL); \
+	if (LOCKDEBUG) { \
+		DbgPrint("IFA_LOCK @ %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeAcquireInStackQueuedSpinLock(&(_ifa)->ifa_spinlock, &(_ifa)->ifa_lockqueue); \
+	if (LOCKDEBUG) { \
+		KIRQL _irql; \
+		_irql = KeGetCurrentIrql(); \
+		DbgPrint("_irql => %d\n", _irql); \
+	} \
 } while (0)
 
 #define IFA_UNLOCK(_ifa) do { \
-	DbgPrint("IFA_UNLOCK @ %d\n", __LINE__); \
-	KeReleaseMutex(&(_ifa)->ifa_mtx, 0); \
+	if (LOCKDEBUG) { \
+		DbgPrint("IFA_UNLOCK @ %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeReleaseInStackQueuedSpinLock(&(_ifa)->ifa_lockqueue); \
+	if (LOCKDEBUG) { \
+		KIRQL _irql; \
+		_irql = KeGetCurrentIrql(); \
+		DbgPrint("_irql => %d\n", _irql); \
+	} \
 } while (0)
 
 #define IFA_INCR_REF(_ifa) do { \
@@ -100,8 +209,10 @@ struct ifaddr {
 	(_ifa)->refcount--; \
 	if ((_ifa)->refcount == 0) { \
 		IFA_LOCK_DESTROY((_ifa)); \
+		ExFreePool((_ifa)); \
+	} else {\
+		IFA_UNLOCK((_ifa)); \
 	} \
-	IFA_UNLOCK((_ifa)); \
 } while (0)
 
 void

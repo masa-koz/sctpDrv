@@ -887,27 +887,8 @@ struct	sctpstat {
 #define SCTP_STAT_INCR_BY(_x,_d) atomic_add_long(&sctpstat._x, _d)
 #define SCTP_STAT_DECR_BY(_x,_d) atomic_add_long(&sctpstat._x, -(_d))
 #else
-#if defined(__Windows__)
-#define SCTP_STAT_INIT() do { \
-	sctpstat.mtx = ExAllocatePool(NonPagedPool, sizeof(*sctpstat.mtx)); \
-	KeInitializeMutex(sctpstat.mtx, 0); \
-} while (0)
-#define SCTP_STAT_INCR_BY(_x,_d) do { \
-	KeWaitForMutexObject(sctpstat.mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctpstat._x += (_d); \
-	KeReleaseMutex(sctpstat.mtx, 0); \
-} while (0)
-#define SCTP_STAT_DECR_BY(_x,_d) do { \
-	KeWaitForMutexObject(sctpstat.mtx, Executive, KernelMode, \
-	    FALSE, NULL); \
-	sctpstat._x -= (_d); \
-	KeReleaseMutex(sctpstat.mtx, 0); \
-} while (0)
-#else
 #define SCTP_STAT_INCR_BY(_x,_d) atomic_add_int(&sctpstat._x, _d)
 #define SCTP_STAT_DECR_BY(_x,_d) atomic_add_int(&sctpstat._x, -(_d))
-#endif
 #endif
 /* The following macros are for handling MIB values, */
 #define SCTP_STAT_INCR_COUNTER32(_x) SCTP_STAT_INCR(_x)
@@ -997,15 +978,21 @@ int
 sctp_lower_sosend(struct socket *so,
     struct sockaddr *addr,
     struct uio *uio,
+#if defined(__Windows__)
+    struct mpkt *top,
+#else
     struct mbuf *top,
+#endif
     struct mbuf *control,
     int flags,
     int use_rcvinfo,
-    struct sctp_sndrcvinfo *srcv,
+    struct sctp_sndrcvinfo *srcv
+#if !defined(__Windows__)
 #if defined(__FreeBSD__) && __FreeBSD_version >= 500000
-    struct thread *p
+    , struct thread *p
 #else
-    struct proc *p
+    , struct proc *p
+#endif
 #endif
 );
 

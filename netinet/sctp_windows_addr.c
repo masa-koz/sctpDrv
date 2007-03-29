@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: sctp_windows_addr.c,v 1.1 2007/03/18 19:24:44 kozuka Exp $
+ * $Id: sctp_windows_addr.c,v 1.2 2007/03/29 07:57:58 kozuka Exp $
  */
 
 /*-
@@ -66,7 +66,6 @@
 #include <netinet/sctp_timer.h>
 #include <netinet/sctp_asconf.h>
 #include <netinet/sctp_indata.h>
-#include <sys/unistd.h>
 
 #ifdef SCTP_DEBUG
 extern uint32_t sctp_debug_on;
@@ -93,63 +92,47 @@ sctp_init_ifns_for_vrf(int vrfid)
 	struct sctp_ifa *sctp_ifa;
 	uint32_t ifa_flags;
 
-	TAILQ_FOREACH(ifn, &ifnet, if_list) {
-		TAILQ_FOREACH(ifa, &ifn->if_addrlist, ifa_list) {
-			if(ifa->ifa_addr == NULL) {
-				continue;
-			}
-			if ((ifa->ifa_addr->sa_family != AF_INET) &&
-			    (ifa->ifa_addr->sa_family != AF_INET6)
+	IFNET_WLOCK();
+	TAILQ_FOREACH(ifn, &ifnet, if_link) {
+		IF_LOCK(ifn);
+		TAILQ_FOREACH(ifa, &ifn->if_addrhead, ifa_link) {
+			if ((ifa->ifa_addr.ss_family != AF_INET) &&
+			    (ifa->ifa_addr.ss_family != AF_INET6)
 				) {
 				/* non inet/inet6 skip */
 				continue;
 			}
-			if(ifa->ifa_addr->sa_family == AF_INET6) {
-				ifa6 = (struct in6_ifaddr *)ifa;
-				ifa_flags = ifa6->ia6_flags;
-				if (IN6_IS_ADDR_UNSPECIFIED(&((struct sockaddr_in6 *)ifa->ifa_addr)->sin6_addr)) {
+			if(ifa->ifa_addr.ss_family == AF_INET6) {
+				if (IN6_IS_ADDR_UNSPECIFIED(&((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_addr)) {
 					/* skip unspecifed addresses */
 					continue;
 				}
 
-			} else if (ifa->ifa_addr->sa_family == AF_INET) {
-				if (((struct sockaddr_in *)ifa->ifa_addr)->sin_addr.s_addr == 0) {
+			} else if (ifa->ifa_addr.ss_family == AF_INET) {
+				if (((struct sockaddr_in *)&ifa->ifa_addr)->sin_addr.s_addr == 0) {
 					continue;
 				}
 			}
 
-			if (sctp_is_desired_interface_type(ifa) == 0) {
-				/* non desired type */
-				continue;
-			}
-
-			if((ifa->ifa_addr->sa_family == AF_INET6) ||
-			   (ifa->ifa_addr->sa_family == AF_INET)) {
-				if (ifa->ifa_addr->sa_family == AF_INET6) {
-					ifa6 = (struct in6_ifaddr *)ifa;
-					ifa_flags = ifa6->ia6_flags;
-				} else {
-					ifa_flags = 0;
-				}
+			if((ifa->ifa_addr.ss_family == AF_INET6) ||
+			   (ifa->ifa_addr.ss_family == AF_INET)) {
+				ifa_flags = 0;
 				sctp_ifa = sctp_add_addr_to_vrf(vrfid, 
-								(void *)ifn,
-								ifn->if_index, 
-								ifn->if_type,
-#ifdef __APPLE__
-								ifn->if_name,
-#else
-								ifn->if_xname,
-#endif
-								(void *)ifa,
-								ifa->ifa_addr,
-								ifa_flags
-					);
+				    (void *)ifn,
+				    ifn->if_index, 
+				    0,
+				    "",
+				    (void *)ifa,
+				    (struct sockaddr *)&ifa->ifa_addr,
+				    0);
 				if(sctp_ifa) {
 					sctp_ifa->localifa_flags &= ~SCTP_ADDR_DEFER_USE;
 				} 
 			}
 		}
+		IF_UNLOCK(ifn);
 	}
+	IFNET_WUNLOCK();
 }
 
 
@@ -178,7 +161,6 @@ sctp_addr_change(struct ifaddr *ifa, int cmd)
 	struct sctp_laddr *wi;
 	struct sctp_ifa *ifap=NULL;
 	uint32_t ifa_flags=0;
-	struct in6_ifaddr *ifa6;
 	/* BSD only has one VRF, if this changes
 	 * we will need to hook in the right 
 	 * things here to get the id to pass to
@@ -194,51 +176,44 @@ sctp_addr_change(struct ifaddr *ifa, int cmd)
 		return;
 	}
 
-	if(ifa->ifa_addr == NULL) {
-		return;
-	}
-	if ((ifa->ifa_addr->sa_family != AF_INET) &&
-	    (ifa->ifa_addr->sa_family != AF_INET6)
+	if ((ifa->ifa_addr.ss_family != AF_INET) &&
+	    (ifa->ifa_addr.ss_family != AF_INET6)
 		) {
 		/* non inet/inet6 skip */
 		return;
 	}
-	if(ifa->ifa_addr->sa_family == AF_INET6) {
-		ifa6 = (struct in6_ifaddr *)ifa;
-		ifa_flags = ifa6->ia6_flags;
-		if (IN6_IS_ADDR_UNSPECIFIED(&((struct sockaddr_in6 *)ifa->ifa_addr)->sin6_addr)) {
+	if(ifa->ifa_addr.ss_family == AF_INET6) {
+		if (IN6_IS_ADDR_UNSPECIFIED(&((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_addr)) {
 			/* skip unspecifed addresses */
 			return;
 		}
 
-	} else if (ifa->ifa_addr->sa_family == AF_INET) {
-		if (((struct sockaddr_in *)ifa->ifa_addr)->sin_addr.s_addr == 0) {
+	} else if (ifa->ifa_addr.ss_family == AF_INET) {
+		if (((struct sockaddr_in *)&ifa->ifa_addr)->sin_addr.s_addr == 0) {
 			return;
 		}
 	}
 
-	if (sctp_is_desired_interface_type(ifa) == 0) {
-		/* non desired type */
-		return;
-	}
 	if(cmd == RTM_ADD) {
-		ifap = sctp_add_addr_to_vrf(SCTP_DEFAULT_VRFID, (void *)ifa->ifa_ifp,
-					    ifa->ifa_ifp->if_index, ifa->ifa_ifp->if_type,
-#ifdef __APPLE__
-		                            ifa->ifa_ifp->if_name,
-#else
-		                            ifa->ifa_ifp->if_xname,
-#endif
-					    (void *)ifa, ifa->ifa_addr, ifa_flags);
+		ifap = sctp_add_addr_to_vrf(SCTP_DEFAULT_VRFID,
+		    (void *)ifa->ifa_ifp,
+		    ifa->ifa_ifp->if_index,
+		    0,
+		    "",
+		    (void *)ifa,
+		    (struct sockaddr *)&ifa->ifa_addr,
+		    0);
+#if 0
 		/* Bump up the refcount so that when the timer
 		 * completes it will drop back down.
 		 */
  		if(ifap)
 			atomic_add_int(&ifap->refcount, 1);
+#endif
 		
 	} else if (cmd == RTM_DELETE) {
 
-		ifap = sctp_del_addr_from_vrf(SCTP_DEFAULT_VRFID, ifa->ifa_addr, ifa->ifa_ifp->if_index);
+		ifap = sctp_del_addr_from_vrf(SCTP_DEFAULT_VRFID, (struct sockaddr *)&ifa->ifa_addr, ifa->ifa_ifp->if_index);
 		/* We don't bump refcount here so when it completes
 		 * the final delete will happen.
 		 */

@@ -112,7 +112,11 @@ void sctp_iterator_worker(void);
 int find_next_best_mtu(int);
 
 void
+#if !defined(__Windows__)
 sctp_timeout_handler(void *);
+#else
+sctp_timeout_handler(PKDPC, void *, void *, void *);
+#endif
 
 uint32_t
 sctp_calculate_rto(struct sctp_tcb *, struct sctp_association *,
@@ -130,7 +134,7 @@ int sctp_add_pad_tombuf(struct mbuf *, int);
 
 int sctp_pad_lastmbuf(struct mbuf *, int, struct mbuf *);
 
-void sctp_ulp_notify(uint32_t, struct sctp_tcb *, uint32_t, void *);
+void sctp_ulp_notify(uint32_t, struct sctp_tcb *, uint16_t, void *);
 
 void
 sctp_pull_off_control_to_new_inp(struct sctp_inpcb *old_inp,
@@ -144,7 +148,7 @@ void sctp_report_all_outbound(struct sctp_tcb *, int);
 
 int sctp_expand_mapping_array(struct sctp_association *);
 
-void sctp_abort_notification(struct sctp_tcb *, int);
+void sctp_abort_notification(struct sctp_tcb *, uint16_t);
 
 /* We abort responding to an IP packet for some reason */
 void
@@ -153,7 +157,7 @@ sctp_abort_association(struct sctp_inpcb *, struct sctp_tcb *,
 
 /* We choose to abort via user input */
 void
-sctp_abort_an_association(struct sctp_inpcb *, struct sctp_tcb *, int,
+sctp_abort_an_association(struct sctp_inpcb *, struct sctp_tcb *, uint16_t,
     struct mbuf *);
 
 void
@@ -213,9 +217,9 @@ sctp_notify_partial_delivery_indication(struct sctp_tcb *stcb,
 
 int
 sctp_release_pr_sctp_chunk(struct sctp_tcb *, struct sctp_tmit_chunk *,
-    int, struct sctpchunk_listhead *);
+    uint16_t, struct sctpchunk_listhead *);
 
-struct mbuf *sctp_generate_invmanparam(int);
+struct mbuf *sctp_generate_invmanparam(uint16_t);
 
 
 #ifdef SCTP_MBCNT_LOGGING
@@ -224,6 +228,7 @@ sctp_free_bufspace(struct sctp_tcb *, struct sctp_association *,
     struct sctp_tmit_chunk *);
 
 #else
+#if !defined(__Windows__)
 #define sctp_free_bufspace(stcb, asoc, tp1, chk_cnt)  \
 do { \
 	if (tp1->data != NULL) { \
@@ -243,9 +248,32 @@ do { \
 		} \
         } \
 } while (0)
+#else
+#define sctp_free_bufspace(stcb, asoc, tp1, chk_cnt)  \
+do { \
+	if (tp1->data != NULL) { \
+		SCTP_TCB_LOCK((stcb)); \
+                (asoc)->chunks_on_out_queue =- chk_cnt; \
+		if ((asoc)->total_output_queue_size >= tp1->book_size) { \
+			(asoc)->total_output_queue_size -= tp1->book_size; \
+		} else { \
+			(asoc)->total_output_queue_size = 0; \
+		} \
+		SCTP_TCB_UNLOCK((stcb)); \
+   	        if (stcb->sctp_socket && ((stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_TCPTYPE) || \
+	            (stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_IN_TCPPOOL))) { \
+			if (stcb->sctp_socket->so_snd.sb_cc >= tp1->book_size) { \
+			} else { \
+				stcb->sctp_socket->so_snd.sb_cc = 0; \
+			} \
+		} \
+        } \
+} while (0)
+#endif
 
 #endif
 
+#if !defined(__Windows__)
 #define sctp_free_spbufspace(stcb, asoc, sp)  \
 do { \
  	if (sp->data != NULL) { \
@@ -276,6 +304,10 @@ do { \
 	} \
 } while (0)
 
+#else
+#define	sctp_free_spbufspace(stcb, asoc, sp)
+#define	sctp_snd_sb_alloc(stcb, sz)
+#endif
 
 #if defined(__NetBSD__)
 int

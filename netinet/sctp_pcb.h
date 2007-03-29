@@ -82,6 +82,7 @@ TAILQ_HEAD(sctp_streamhead, sctp_stream_queue_pending);
 #define SCTP_PCB_FLAGS_BLOCKING_IO	0x10000000
 #define SCTP_PCB_FLAGS_SOCKET_GONE	0x20000000
 #define SCTP_PCB_FLAGS_SOCKET_ALLGONE	0x40000000
+#define SCTP_PCB_FLAGS_V6_ONLY		0x80000000
 /* flags to copy to new PCB */
 #define SCTP_PCB_COPY_FLAGS		0x0e000004
 
@@ -130,9 +131,7 @@ struct sctp_ifn {
 	uint32_t ifn_index;	/* shorthand way to look at ifn for reference */
 	uint32_t refcount;	/* number of reference held should be >= ifa_count */
 	uint32_t ifa_count;	/* IFA's we hold (in our list - ifalist)*/
-#if !defined(__Windows__)
 	char     ifn_name[SCTP_IFNAMSIZ];
-#endif
 };
 
 /* SCTP local IFA flags */
@@ -271,11 +270,10 @@ struct sctp_epinfo {
 	void *logging_mtx;
 #endif /* _KERN_LOCKS_H_ */
 #elif defined(__Windows__)
-	KMUTEX *ipi_ep_mtx;
-	KMUTEX *it_mtx;
-	KMUTEX *ipi_iterator_wq_mtx;
-	KMUTEX *ipi_addr_mtx;
-	KMUTEX *logging_mtx;
+	KMUTEX ipi_ep_mtx;
+	KMUTEX it_mtx;
+	KMUTEX ipi_iterator_wq_mtx;
+	KMUTEX ipi_addr_mtx;
 #endif
 	uint32_t ipi_count_ep;
 
@@ -348,15 +346,15 @@ struct sctp_pcb {
 
 	/* various thresholds */
 	/* Max times I will init at a guy */
-	uint16_t max_init_times;
+	unsigned int max_init_times;
 
 	/* Max times I will send before we consider someone dead */
-	uint16_t max_send_times;
+	unsigned int max_send_times;
 
-	uint16_t def_net_failure;
+	unsigned int def_net_failure;
 
 	/* number of streams to pre-open on a association */
-	uint16_t pre_open_stream_count;
+	unsigned int pre_open_stream_count;
 	uint16_t max_open_streams_intome;
 
 	/* random number generator */
@@ -375,7 +373,7 @@ struct sctp_pcb {
 	uint32_t initial_sequence_debug;
 	uint32_t adaptation_layer_indicator;
 	char store_at;
-	uint8_t max_burst;
+	unsigned int max_burst;
 	char current_secret_number;
 	char last_secret_number;
 };
@@ -395,7 +393,6 @@ struct sctp_inpcb {
 	 * put an inpcb in front of it all, kind of a waste but we need to
 	 * for compatability with all the other stuff.
 	 */
-#if !defined(__Windows__)
 	union {
 		struct inpcb inp;
 		char align[(sizeof(struct in6pcb) + SCTP_ALIGNM1) &
@@ -405,14 +402,6 @@ struct sctp_inpcb {
 #if defined(SCTP_APPLE_FINE_GRAINED_LOCKING)
 	/* leave some space in case i386 inpcb is bigger than ppc */
 	uint8_t		padding[128];
-#endif
-#else
-	union {
-		struct inpcb {
-			uint16_t inp_fport;
-			uint16_t inp_lport;
-		} inp;
-	} ip_inp;
 #endif
 
 	/* Socket buffer lock protects read_queue and of course sb_cc */
@@ -611,7 +600,8 @@ struct sctp_inpcb *sctp_pcb_findep(struct sockaddr *, int, int);
 
 #if defined(__FreeBSD__) && __FreeBSD_version >= 500000
 int sctp_inpcb_bind(struct socket *, struct sockaddr *, struct thread *);
-
+#elif defined(__Windows__)
+int sctp_inpcb_bind(struct socket *, struct sockaddr *);
 #else
 int sctp_inpcb_bind(struct socket *, struct sockaddr *, struct proc *);
 
@@ -651,7 +641,7 @@ sctp_findassociation_ep_asconf(struct mbuf *, int, int,
 
 int sctp_inpcb_alloc(struct socket *);
 
-int sctp_is_address_on_local_host(struct sockaddr *addr, uint32_t vrf_id);
+uint8_t sctp_is_address_on_local_host(struct sockaddr *addr, uint32_t vrf_id);
 
 void sctp_inpcb_free(struct sctp_inpcb *, int, int);
 
@@ -682,6 +672,8 @@ void sctp_remove_net(struct sctp_tcb *, struct sctp_nets *);
 int sctp_del_remote_addr(struct sctp_tcb *, struct sockaddr *);
 
 void sctp_pcb_init(void);
+
+void sctp_pcb_finish(void);
 
 int sctp_add_local_addr_assoc(struct sctp_tcb *, struct sctp_ifa *, int);
 
@@ -715,6 +707,13 @@ sctp_initiate_iterator(inp_func inpf,
 		       end_func ef, 
 		       struct sctp_inpcb *, 
 		       uint8_t co_off);
+
+#if defined(SCTP_USE_THREAD_BASED_ITERATOR)
+void sctp_wakeup_iterator(void);
+
+void sctp_startup_iterator(void);
+#endif
+
 
 #ifdef __NetBSD__
 extern void in6_sin6_2_sin(struct sockaddr_in *, struct sockaddr_in6 *sin6);

@@ -248,9 +248,9 @@ __P((struct socket *, int, struct mbuf *, struct mbuf *,
 #define sctp_is_feature_on(inp, feature) (inp->sctp_features & feature)
 #define sctp_is_feature_off(inp, feature) ((inp->sctp_features & feature) == 0)
 
-#define	sctp_sbspace(asoc, sb) ((long) (((sb)->sb_hiwat > (asoc)->sb_cc) ? ((sb)->sb_hiwat - (asoc)->sb_cc) : 0))
+#define	sctp_sbspace(asoc, sb) ((((sb)->sb_hiwat > (asoc)->sb_cc) ? ((sb)->sb_hiwat - (asoc)->sb_cc) : 0))
 
-#define	sctp_sbspace_failedmsgs(sb) ((long) (((sb)->sb_hiwat > (sb)->sb_cc) ? ((sb)->sb_hiwat - (sb)->sb_cc) : 0))
+#define	sctp_sbspace_failedmsgs(sb) ((((sb)->sb_hiwat > (sb)->sb_cc) ? ((sb)->sb_hiwat - (sb)->sb_cc) : 0))
 
 #define sctp_sbspace_sub(a,b) ((a > b) ? (a - b) : 0)
 
@@ -396,7 +396,6 @@ extern uint32_t sctp_system_free_resc_limit;
 		atomic_subtract_int(&(sb)->sb_ctl,SCTP_BUF_LEN((m))); \
 }
 
-
 #define sctp_sballoc(stcb, sb, m) { \
 	atomic_add_int(&(sb)->sb_cc,SCTP_BUF_LEN((m))); \
 	atomic_add_int(&(sb)->sb_mbcnt, MSIZE); \
@@ -430,6 +429,7 @@ extern uint32_t sctp_system_free_resc_limit;
 	} \
 } while (0)
 
+#if !defined(__Windows__)
 #define sctp_sbfree(ctl, stcb, sb, m) { \
 	if ((sb)->sb_cc >= (uint32_t)SCTP_BUF_LEN((m))) { \
 		atomic_subtract_int(&(sb)->sb_cc, SCTP_BUF_LEN((m))); \
@@ -480,7 +480,10 @@ extern uint32_t sctp_system_free_resc_limit;
 	if (SCTP_BUF_IS_EXTENDED(m)) \
 		atomic_add_int(&(sb)->sb_mbcnt, SCTP_BUF_EXTEND_SIZE(m)); \
 }
-
+#else
+#define sctp_sbfree(ctl, stcb, sb, m)
+#define sctp_sballoc(stcb, sb, m)
+#endif
 #endif
 
 #define sctp_ucount_incr(val) { \
@@ -496,14 +499,15 @@ extern uint32_t sctp_system_free_resc_limit;
 }
 
 #define sctp_mbuf_crush(data) do { \
-	struct mbuf *_m; \
-	_m = (data); \
-	while(_m && (SCTP_BUF_LEN(_m) == 0)) { \
-		(data)  = SCTP_BUF_NEXT(_m); \
-		SCTP_BUF_NEXT(_m) = NULL; \
-		sctp_m_free(_m); \
-		_m = (data); \
+	struct mbuf *__m = NULL, *__n = NULL; \
+	__m = (data); \
+	while(__m != NULL && SCTP_BUF_GET_LEN(__m) == 0) { \
+		__n = SCTP_BUF_GET_NEXT(__m); \
+		SCTP_BUF_SET_NEXT(__m, NULL); \
+		SCTP_BUF_FREE_ALL(__m); \
+		__m = __n; \
 	} \
+	(data) = __m; \
 } while (0)
 
 
@@ -541,7 +545,7 @@ void sctp_input __P((struct mbuf *,...));
 void sctp_drain __P((void));
 void sctp_init __P((void));
 
-#ifdef SCTP_APPLE_FINE_GRAINED_LOCKING
+#if defined(__Windows__) || defined(__APPLE__)
 void sctp_finish(void);
 #endif
 

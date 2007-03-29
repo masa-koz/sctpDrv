@@ -88,7 +88,7 @@ sctp_early_fr_timer(struct sctp_inpcb *inp,
 	cur_rtt *= 1000;
 	tv.tv_sec = cur_rtt / 1000000;
 	tv.tv_usec = cur_rtt % 1000000;
-#ifndef __FreeBSD__
+#if !(defined(__FreeBSD__) || defined(__Windows__))
 	timersub(&now, &tv, &min_wait);
 #else
 	min_wait = now;
@@ -276,17 +276,15 @@ sctp_threshold_management(struct sctp_inpcb *inp, struct sctp_tcb *stcb,
 		/* Abort notification sends a ULP notify */
 		struct mbuf *oper;
 
-		oper = sctp_get_mbuf_for_msg((sizeof(struct sctp_paramhdr) + sizeof(uint32_t)),
-					       0, M_DONTWAIT, 1, MT_DATA);
+		SCTP_BUF_ALLOC(oper, (sizeof(struct sctp_paramhdr) + sizeof(uint32_t)));
 		if (oper) {
 			struct sctp_paramhdr *ph;
 			uint32_t *ippp;
 
-			SCTP_BUF_LEN(oper) = sizeof(struct sctp_paramhdr) +
-			    sizeof(uint32_t);
+			SCTP_BUF_SET_LEN(oper, sizeof(struct sctp_paramhdr) + sizeof(uint32_t));
 			ph = mtod(oper, struct sctp_paramhdr *);
 			ph->param_type = htons(SCTP_CAUSE_PROTOCOL_VIOLATION);
-			ph->param_length = htons(SCTP_BUF_LEN(oper));
+			ph->param_length = htons(SCTP_BUF_GET_LEN(oper));
 			ippp = (uint32_t *) (ph + 1);
 			*ippp = htonl(SCTP_FROM_SCTP_TIMER+SCTP_LOC_1);
 		}
@@ -546,7 +544,7 @@ sctp_mark_all_for_resend(struct sctp_tcb *stcb,
 #endif
 	tv.tv_sec = cur_rtt / 1000000;
 	tv.tv_usec = cur_rtt % 1000000;
-#ifndef __FreeBSD__
+#if !(defined(__FreeBSD__) || defined(__Windows__))
 	timersub(&now, &tv, &min_wait);
 #else
 	min_wait = now;
@@ -1107,17 +1105,15 @@ sctp_cookie_timer(struct sctp_inpcb *inp,
 			/* FOOBAR! */
 			struct mbuf *oper;
 
-			oper = sctp_get_mbuf_for_msg((sizeof(struct sctp_paramhdr) + sizeof(uint32_t)),
-						       0, M_DONTWAIT, 1, MT_DATA);
+			SCTP_BUF_ALLOC(oper, (sizeof(struct sctp_paramhdr) + sizeof(uint32_t)));
 			if (oper) {
 				struct sctp_paramhdr *ph;
 				uint32_t *ippp;
 
-				SCTP_BUF_LEN(oper) = sizeof(struct sctp_paramhdr) +
-				    sizeof(uint32_t);
+				SCTP_BUF_SET_LEN(oper, sizeof(struct sctp_paramhdr) + sizeof(uint32_t));
 				ph = mtod(oper, struct sctp_paramhdr *);
 				ph->param_type = htons(SCTP_CAUSE_PROTOCOL_VIOLATION);
-				ph->param_length = htons(SCTP_BUF_LEN(oper));
+				ph->param_length = htons(SCTP_BUF_GET_LEN(oper));
 				ippp = (uint32_t *) (ph + 1);
 				*ippp = htonl(SCTP_FROM_SCTP_TIMER+SCTP_LOC_2);
 			}
@@ -1580,6 +1576,7 @@ sctp_pathmtu_timer(struct sctp_inpcb *inp,
 		/* nothing to do */
 		return;
 	}
+#if !defined(__Windows__)
 	if (net->ro.ro_rt != NULL) {
 		/*
 		 * only if we have a route and interface do we set anything.
@@ -1593,6 +1590,9 @@ sctp_pathmtu_timer(struct sctp_inpcb *inp,
 			}
 		}
 	}
+#else
+	net->mtu = 1500;
+#endif
 	/* restart the timer */
 	sctp_timer_start(SCTP_TIMER_TYPE_PATHMTURAISE, inp, stcb, net);
 }

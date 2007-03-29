@@ -3,13 +3,19 @@ TARGETNAME=netinet
 TARGETTYPE=LIBRARY
 TARGETPATH=.
 TARGETLIBS=
-C_DEFINES=-DNTVERSION=$(NTVERSION) -D_KERNEL -D__Windows__ -DINET -DINET6 -DSCTP_DEBUG
-MSC_WARNING_LEVEL=/W3 /WX
+C_DEFINES=-DNTVERSION=$(NTVERSION) -D_KERNEL -D__Windows__ -DINET -DINET6 -DSCTP_DEBUG -DHAVE_SALEN
+MSC_WARNING_LEVEL=/W1 /WX
 INCLUDES=..;..\algrthms;..\common;..\inc;$(BASEDIR)\inc\crt;$(BASEDIR)\inc\ddk\wxp;$(BASEDIR)\src\network\inc
 SOURCES=	\
+    sctp_windows_addr.c \
     sctp_pcb.c \
     sctp_input.c \
     sctp_output.c \
+    sctp_indata.c \
+    sctp_timer.c \
     sctp_usrreq.c \
     sctputil.c \
-    sctp_crc32.c
+    sctp_crc32.c \
+    sctp_sha1.c \
+    sctp_auth.c \
+    sctp_asconf.c

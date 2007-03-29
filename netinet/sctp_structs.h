@@ -234,7 +234,7 @@ struct sctp_nets {
 	/* if this guy is ok or not ... status */
 	uint16_t dest_state;
 	/* number of transmit failures to down this guy */
-	uint16_t failure_threshold;
+	unsigned int failure_threshold;
 	/* error stats on destination */
 	uint16_t error_count;
 
@@ -749,7 +749,7 @@ struct sctp_association {
 	unsigned int sctp_autoclose_ticks;
 
 	/* how many preopen streams we have */
-	uint16_t pre_open_streams;
+	unsigned int pre_open_streams;
 
 	/* How many streams I support coming into me */
 	unsigned int max_inbound_streams;
@@ -808,10 +808,10 @@ struct sctp_association {
 
 	/* my maximum number of retrans of INIT and SEND */
 	/* copied from SCTP but should be individually setable */
-	uint16_t max_init_times;
-	uint16_t max_send_times;
+	unsigned int max_init_times;
+	unsigned int max_send_times;
 
-	uint16_t def_net_failure;
+	unsigned int def_net_failure;
 
 	/*
 	 * lock flag: 0 is ok to send, 1+ (duals as a retran count) is
@@ -841,7 +841,7 @@ struct sctp_association {
 	uint8_t send_sack;
 
 	/* max burst after fast retransmit completes */
-	uint8_t max_burst;
+	unsigned int max_burst;
 
 	uint8_t sat_network;	/* RTT is in range of sat net or greater */
 	uint8_t sat_network_lockout;	/* lockout code */

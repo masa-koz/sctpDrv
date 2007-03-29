@@ -51,7 +51,7 @@ extern uint32_t sctp_debug_on;
 #endif				/* SCTP_DEBUG */
 
 
-inline void
+void
 sctp_clear_chunklist(sctp_auth_chklist_t *chklist)
 {
 	bzero(chklist, sizeof(*chklist));
@@ -157,7 +157,7 @@ sctp_auth_delete_chunk(uint8_t chunk, sctp_auth_chklist_t *list)
 	return (0);
 }
 
-inline size_t
+size_t
 sctp_auth_get_chklist_size(const sctp_auth_chklist_t *list)
 {
 	if (list == NULL)
@@ -325,7 +325,7 @@ sctp_show_key(sctp_key_t *key, const char *str)
 	}
 }
 
-static inline uint32_t
+static __inline uint32_t
 sctp_get_keylen(sctp_key_t *key)
 {
 	if (key != NULL)
@@ -812,7 +812,7 @@ sctp_free_authinfo(sctp_authinfo_t *authinfo)
 }
 
 
-inline uint32_t
+uint32_t
 sctp_get_auth_chunk_len(uint16_t hmac_algo)
 {
 	int size;
@@ -847,7 +847,7 @@ sctp_get_hmac_digest_len(uint16_t hmac_algo)
 	}			/* end switch */
 }
 
-static inline int
+static __inline int
 sctp_get_hmac_block_len(uint16_t hmac_algo)
 {
 	switch (hmac_algo) {
@@ -1089,18 +1089,18 @@ sctp_hmac_m(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
 	sctp_hmac_update(hmac_algo, &ctx, ipad, blocklen);
 	/* find the correct starting mbuf and offset (get start of text) */
 	m_tmp = m;
-	while ((m_tmp != NULL) && (m_offset >= (uint32_t) SCTP_BUF_LEN(m_tmp))) {
-		m_offset -= SCTP_BUF_LEN(m_tmp);
-		m_tmp = SCTP_BUF_NEXT(m_tmp);
+	while ((m_tmp != NULL) && (m_offset >= (uint32_t) SCTP_BUF_GET_LEN(m_tmp))) {
+		m_offset -= SCTP_BUF_GET_LEN(m_tmp);
+		m_tmp = SCTP_BUF_GET_NEXT(m_tmp);
 	}
 	/* now use the rest of the mbuf chain for the text */
 	while (m_tmp != NULL) {
 		sctp_hmac_update(hmac_algo, &ctx, mtod(m_tmp, uint8_t *) + m_offset,
-		    SCTP_BUF_LEN(m_tmp) - m_offset);
+		    SCTP_BUF_GET_LEN(m_tmp) - m_offset);
 
 		/* clear the offset since it's only for the first mbuf */
 		m_offset = 0;
-		m_tmp = SCTP_BUF_NEXT(m_tmp);
+		m_tmp = SCTP_BUF_GET_NEXT(m_tmp);
 	}
 	sctp_hmac_final(hmac_algo, &ctx, temp);
 
@@ -1616,23 +1616,23 @@ sctp_bzero_m(struct mbuf *m, uint32_t m_offset, uint32_t size)
 
 	/* find the correct starting mbuf and offset (get start position) */
 	m_tmp = m;
-	while ((m_tmp != NULL) && (m_offset >= (uint32_t) SCTP_BUF_LEN(m_tmp))) {
-		m_offset -= SCTP_BUF_LEN(m_tmp);
-		m_tmp = SCTP_BUF_NEXT(m_tmp);
+	while ((m_tmp != NULL) && (m_offset >= (uint32_t) SCTP_BUF_GET_LEN(m_tmp))) {
+		m_offset -= SCTP_BUF_GET_LEN(m_tmp);
+		m_tmp = SCTP_BUF_GET_NEXT(m_tmp);
 	}
 	/* now use the rest of the mbuf chain */
 	while ((m_tmp != NULL) && (size > 0)) {
 		data = mtod(m_tmp, uint8_t *) + m_offset;
-		if (size > (uint32_t) SCTP_BUF_LEN(m_tmp)) {
-			bzero(data, SCTP_BUF_LEN(m_tmp));
-			size -= SCTP_BUF_LEN(m_tmp);
+		if (size > (uint32_t) SCTP_BUF_GET_LEN(m_tmp)) {
+			bzero(data, SCTP_BUF_GET_LEN(m_tmp));
+			size -= SCTP_BUF_GET_LEN(m_tmp);
 		} else {
 			bzero(data, size);
 			size = 0;
 		}
 		/* clear the offset since it's only for the first mbuf */
 		m_offset = 0;
-		m_tmp = SCTP_BUF_NEXT(m_tmp);
+		m_tmp = SCTP_BUF_GET_NEXT(m_tmp);
 	}
 }
 
@@ -1683,7 +1683,7 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
 		 * report this in an Error Chunk: Unsupported HMAC
 		 * Identifier
 		 */
-		m_err = sctp_get_mbuf_for_msg(sizeof(*err), 0, M_DONTWAIT, 1, MT_HEADER);
+		SCTP_BUF_ALLOC(m_err, sizeof(*err));
 		if (m_err != NULL) {
 			/* pre-reserve some space */
 			SCTP_BUF_RESV_UF(m_err, sizeof(struct sctp_chunkhdr));
@@ -1693,7 +1693,7 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
 			err->ph.param_type = htons(SCTP_CAUSE_UNSUPPORTED_HMACID);
 			err->ph.param_length = htons(sizeof(*err));
 			err->hmac_id = ntohs(hmac_id);
-			SCTP_BUF_LEN(m_err) = sizeof(*err);
+			SCTP_BUF_SET_LEN(m_err, sizeof(*err));
 			/* queue it */
 			sctp_queue_op_err(stcb, m_err);
 		}
@@ -1784,13 +1784,12 @@ sctp_notify_authentication(struct sctp_tcb *stcb, uint32_t indication,
 		/* event not enabled */
 		return;
 
-	m_notify = sctp_get_mbuf_for_msg(sizeof(struct sctp_authkey_event), 
-					  0, M_DONTWAIT, 1, MT_HEADER);
+	SCTP_BUF_ALLOC(m_notify, sizeof(struct sctp_authkey_event));
 	if (m_notify == NULL)
 		/* no space left */
 		return;
 
-	SCTP_BUF_LEN(m_notify) = 0;
+	SCTP_BUF_SET_LEN(m_notify, 0);
 	auth = mtod(m_notify, struct sctp_authkey_event *);
 	auth->auth_type = SCTP_AUTHENTICATION_EVENT;
 	auth->auth_flags = 0;
@@ -1800,19 +1799,19 @@ sctp_notify_authentication(struct sctp_tcb *stcb, uint32_t indication,
 	auth->auth_indication = indication;
 	auth->auth_assoc_id = sctp_get_associd(stcb);
 
-	SCTP_BUF_LEN(m_notify) = sizeof(*auth);
-	SCTP_BUF_NEXT(m_notify) = NULL;
+	SCTP_BUF_SET_LEN(m_notify, sizeof(*auth));
+	SCTP_BUF_SET_NEXT(m_notify, NULL);
 
 	/* append to socket */
 	control = sctp_build_readq_entry(stcb, stcb->asoc.primary_destination,
 	    0, 0, 0, 0, 0, 0, m_notify);
 	if (control == NULL) {
 		/* no memory */
-		sctp_m_freem(m_notify);
+		SCTP_BUF_FREE_ALL(m_notify);
 		return;
 	}
 	control->spec_flags = M_NOTIFICATION;
-	control->length = SCTP_BUF_LEN(m_notify);
+	control->length = SCTP_BUF_GET_LEN(m_notify);
 	/* not that we need this */
 	control->tail_mbuf = m_notify;
 	sctp_add_to_readq(stcb->sctp_ep, stcb, control,
@@ -1822,7 +1821,7 @@ sctp_notify_authentication(struct sctp_tcb *stcb, uint32_t indication,
 
 /*
  * validates the AUTHentication related parameters in an INIT/INIT-ACK
- * Note: currently only used for INIT as INIT-ACK is handled inline
+ * Note: currently only used for INIT as INIT-ACK is handled __inline
  * with sctp_load_addresses_from_init()
  */
 int

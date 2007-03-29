@@ -123,7 +123,9 @@ void sctp_fix_ecn_echo(struct sctp_association *);
 int
 sctp_output(struct sctp_inpcb *, struct mbuf *, struct sockaddr *,
     struct mbuf *, struct thread *, int);
-
+#elif defined(__Windows__)
+sctp_output(struct sctp_inpcb *, struct mpkt *, struct sockaddr *,
+    struct mbuf *, int);
 #else
 int
 sctp_output(struct sctp_inpcb *, struct mbuf *, struct sockaddr *,
@@ -202,9 +204,13 @@ sctp_sosend(struct socket *so,
     struct sockaddr *addr,
 #endif
     struct uio *uio,
+#if defined(__Windows__)
+    struct mpkt *top,
+#else
     struct mbuf *top,
+#endif
     struct mbuf *control,
-#if defined(__NetBSD__) || defined(__APPLE__)
+#if defined(__NetBSD__) || defined(__APPLE__) || defined(__Windows__)
     int flags
 #else
     int flags,

@@ -39,6 +39,10 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_crc32.c,v 1.6 2007/02/12 23:24:31 rrs E
 #include <netinet/sctp_os.h>
 #include <netinet/sctp_crc32.h>
 
+#if defined(__Windows__)
+#pragma data_seg("NONPAGE")
+#endif
+
 #ifndef SCTP_USE_ADLER32
 
 
