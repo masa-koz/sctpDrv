@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: globals.h,v 1.2 2007/03/16 12:15:30 kozuka Exp $
+ * $Id: globals.h,v 1.3 2007/03/29 07:43:56 kozuka Exp $
  */
 
 /*-
@@ -47,18 +47,22 @@
 #undef SLIST_ENTRY
 #include "queue.h"
 
+#include <stddef.h>
+
 typedef CHAR   int8_t;
 typedef SHORT  int16_t;
 typedef LONG   int32_t;
+typedef LONGLONG int64_t;
 typedef UCHAR  u_int8_t, uint8_t, u_char;
 typedef USHORT u_int16_t, uint16_t, u_short;
 typedef ULONG  u_int32_t, uint32_t, u_long, u_int;
+typedef ULONGLONG uint64_t;
 
-
+#define IOCTL_TCP_QUERY_INFORMATION_EX 1179651
 #define IOCTL_TCP_SET_INFORMATION_EX 1179688
 
 NTSTATUS ZwDeviceIoControlFile(IN HANDLE, IN HANDLE, IN PIO_APC_ROUTINE, IN PVOID, OUT PIO_STATUS_BLOCK,
-    IN ULONG, IN PVOID, IN ULONG, OUT PVOID, OUT PVOID);
+    IN ULONG, IN PVOID, IN ULONG, OUT PVOID, IN ULONG);
 
 __inline USHORT
 ntohs(USHORT x)
@@ -81,12 +85,15 @@ ntohl(ULONG x)
 #define NTOHL(x) \
 	(x) = ntohl(x)
 
+
+char *ip6_sprintf (const struct in6_addr *);
+
+
 #define LITTLE_ENDIAN 0
 #define BIG_ENDIAN 1
 #define BYTE_ORDER LITTLE_ENDIAN
 
 #define	IPVERSION	0x04
-#define AF_INET		2
 
 /*
  * Copied from $FreeBSD: src/sys/netinet/in.h,v 1.90.2.4
@@ -156,10 +163,10 @@ struct ip {
 #define IN_EXPERIMENTAL(i)      (((u_int32_t)(i) & 0xf0000000) == 0xf0000000)
 #define IN_BADCLASS(i)          (((u_int32_t)(i) & 0xf0000000) == 0xf0000000)
 
+#define	INADDR_ANY		(u_int32_t)0x00000000
 
 #define	IPV6_VERSION		0x60
 #define IPV6_VERSION_MASK	0xf0
-#define AF_INET6		23
 
 /*
  * Copied from $FreeBSD: src/sys/netinet6/in6.h,v 1.36.2.6
@@ -212,6 +219,10 @@ struct in6_pktinfo_option {
     struct in6_addr ipi6_addr;
     ULONG ipi6_ifindex;
 };
+
+
+#define IN6_ARE_ADDR_EQUAL(a, b) \
+	(RtlCompareMemory(&(a)->s6_addr[0], &(b)->s6_addr[0], sizeof(struct in6_addr)) == 0)
 
 /*
  * Unspecified

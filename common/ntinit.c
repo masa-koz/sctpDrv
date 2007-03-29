@@ -21,8 +21,10 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntinit.c,v 1.5 2007/03/18 19:25:04 kozuka Exp $
+ * $Id: ntinit.c,v 1.6 2007/03/29 07:40:23 kozuka Exp $
  */
+#pragma data_seg("NONPAGE")
+
 #include "globals.h"
 
 #include <netinet/sctp_os_windows.h>
@@ -30,13 +32,20 @@
 #include <netinet/sctp_pcb.h>
 #include <netinet/sctp_addr.h>
 
+#if 1
+int sctp_attach(struct socket *);
+int sctp_bind(struct socket *, struct sockaddr *);
+int sctp_detach(struct socket *);
+#endif
+
 #define RawIPDeviceWithSCTP L"\\Device\\RawIP\\132"
 #define RawIP6DeviceWithSCTP L"\\Device\\RawIp6\\132"
 
+#define DD_SCTP_ONE_TO_ONE_DEVICE_NAME L"\\Device\\SctpTcp"
+#define DD_SCTP_ONE_TO_MANY_DEVICE_NAME L"\\Device\\SctpUdp"
+
 NTSTATUS DriverEntry(IN PDRIVER_OBJECT, IN PUNICODE_STRING);
 VOID Unload(IN PDRIVER_OBJECT);
-
-NTSTATUS SCTPDispatch(IN PDEVICE_OBJECT, IN PIRP);
 
 NTSTATUS OpenRawSctp(IN UCHAR, OUT HANDLE *, OUT PFILE_OBJECT *);
 NTSTATUS SCTPReceiveDatagram(IN PVOID, IN LONG, IN PVOID, IN LONG,
@@ -48,12 +57,14 @@ NTSTATUS SendDatagram6(IN UCHAR *, IN struct in6_addr *, IN ULONG);
 VOID SCTPReceiveThread(IN PVOID);
 VOID ClientPnPAddNetAddress(IN PTA_ADDRESS, IN PUNICODE_STRING, IN PTDI_PNP_CONTEXT);
 VOID ClientPnPDelNetAddress(IN PTA_ADDRESS, IN PUNICODE_STRING, IN PTDI_PNP_CONTEXT);
+VOID RetrieveRoute(VOID);
+VOID SetRoute(VOID);
 
-NTSTATUS SCTPCreate(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
-NTSTATUS SCTPCleanup(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
-NTSTATUS SCTPClose(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
-NTSTATUS SCTPDispatchInternalDeviceControl(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
-NTSTATUS SCTPDispatchDeviceControl(IN PDEVICE_OBJECT, IN PIRP, IN PIO_STACK_LOCATION);
+NTSTATUS SCTPCreate(IN PDEVICE_OBJECT, IN PIRP);
+NTSTATUS SCTPCleanup(IN PDEVICE_OBJECT, IN PIRP);
+NTSTATUS SCTPClose(IN PDEVICE_OBJECT, IN PIRP);
+NTSTATUS SCTPDispatchDeviceControl(IN PDEVICE_OBJECT, IN PIRP);
+NTSTATUS SCTPDispatch(IN PDEVICE_OBJECT, IN PIRP);
 
 struct RcvContext {
 	BOOLEAN		bActive;
@@ -66,10 +77,23 @@ struct ifqueue {
 	KMUTEX		mtx;
 } *inq, *in6q;
 
+PDEVICE_OBJECT SctpTcpDeviceObject = NULL, SctpUdpDeviceObject = NULL;
 PFILE_OBJECT TpObject, Tp6Object, RcvObject;
 HANDLE TpHandle, Tp6Handle, RcvHandle, BindingHandle;
+
+KSPIN_LOCK atomic_spinlock;
+KLOCK_QUEUE_HANDLE atomic_lockqueue;
+
+NPAGED_LOOKASIDE_LIST ExtBufLookaside;
+NDIS_HANDLE SctpBufferPool;
+NDIS_HANDLE SctpPacketPool;
+
+int if_index = 0;
 struct ifnethead ifnet;
-KMUTEX *ifnet_mtx;
+KSPIN_LOCK ifnet_spinlock;
+KLOCK_QUEUE_HANDLE ifnet_lockqueue;
+
+struct socket *so = NULL;
 
 NTSTATUS
 DriverEntry(
@@ -84,10 +108,17 @@ DriverEntry(
 	OBJECT_ATTRIBUTES  ObjectAttributes;
 	TDI_CLIENT_INTERFACE_INFO ClientInterfaceInfo;
 	UNICODE_STRING clientName;
+	KIRQL oldIrql;
 	
 	int i;
+	int *test = NULL;
 
 	DbgPrint("Enter into DriverEntry\n");
+
+	oldIrql = KeGetCurrentIrql();
+
+	SCTP_BUF_INIT();
+	SCTP_HEADER_INIT();
 
 	TAILQ_INIT(&ifnet);
 	IFNET_LOCK_INIT();
@@ -107,16 +138,8 @@ DriverEntry(
 		BindingHandle = NULL;
 		goto error;
 	}
-#if 0
+
 	sctp_init();
-#endif
-
-	for (i = 0; i < IRP_MJ_MAXIMUM_FUNCTION; i++) {
-		DriverObject->MajorFunction[i] = SCTPDispatch;
-	}
-	DriverObject->DriverUnload = Unload;
-
-#if 0
 	status = OpenRawSctp(AF_INET, &TpHandle, &TpObject);
 	if (status != STATUS_SUCCESS) {
 		DbgPrint("OpenRawSCTP(AF_INET) failed, code=%d\n", status);
@@ -162,10 +185,55 @@ DriverEntry(
 		    NULL);
 		ZwClose(RcvHandle);
 	}
-#endif
+
+	RtlInitUnicodeString(&devname, DD_SCTP_ONE_TO_MANY_DEVICE_NAME);
+	status = IoCreateDevice(DriverObject, 0, &devname, FILE_DEVICE_NETWORK,
+	    0, FALSE, &SctpUdpDeviceObject);
+	if (status != STATUS_SUCCESS) {
+		DbgPrint("IoCreateDevice failed, code=%d\n", status);
+		goto error;
+	}
+	for (i = 0; i < IRP_MJ_MAXIMUM_FUNCTION; i++) {
+		DriverObject->MajorFunction[i] = SCTPDispatch;
+	}
+	DriverObject->MajorFunction[IRP_MJ_CREATE] = SCTPCreate;
+	DriverObject->MajorFunction[IRP_MJ_CLEANUP] = SCTPCleanup;
+	DriverObject->MajorFunction[IRP_MJ_CLOSE] = SCTPClose;
+	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = SCTPDispatchDeviceControl;
+	DriverObject->DriverUnload = Unload;
+
+	/* XXX */
+	if (oldIrql > KeGetCurrentIrql()) {
+		KeLowerIrql(oldIrql);
+	}
+
+	if (1) {
+		struct sockaddr_in sin;
+		int error = 0;
+
+		RtlZeroMemory(&sin, sizeof(sin));
+		sin.sin_family = AF_INET;
+		sin.sin_len = sizeof(sin);
+		sin.sin_port = htons(80);
+
+		so = ExAllocatePool(NonPagedPool, sizeof(*so));
+		RtlZeroMemory(so, sizeof(*so));
+		so->so_type = SOCK_SEQPACKET;
+		so->so_qlimit = 1;
+
+		error = sctp_attach(so);
+		if (error == 0) {
+			error = sctp_bind(so, (struct sockaddr *)&sin);
+			DbgPrint("sctp_bind: error=%d\n", error);
+		} else {
+			DbgPrint("sctp_attach: error=%d\n", error);
+		}
+	}
+
+	SetRoute();
+	RetrieveRoute();
 
 	DbgPrint("Leave from DriverEntry#1\n");
-
 	return STATUS_SUCCESS;
 error:
 	Unload(DriverObject);
@@ -178,13 +246,46 @@ Unload(
     IN PDRIVER_OBJECT DriverObject)
 {
 	NTSTATUS status;
+	int error = 0;
 
 	DbgPrint("Enter into Unload\n");
+
+	if (so != NULL) {
+		error = sctp_detach(so);
+		DbgPrint("sctp_detach: error=%d\n", error);
+	}
+	sctp_finish();
+
+	if (SctpTcpDeviceObject != NULL) {
+		IoDeleteDevice(SctpTcpDeviceObject);	
+	}
+	if (SctpUdpDeviceObject != NULL) {
+		IoDeleteDevice(SctpUdpDeviceObject);	
+	}
 
 	if (BindingHandle != NULL) {
 		TdiDeregisterPnPHandlers(BindingHandle);
 	}
+	{
+		struct ifnet *ifn;
+		struct ifaddr *ifa;
 
+		IFNET_WLOCK();
+		ifn = TAILQ_FIRST(&ifnet);
+		while (ifn != NULL) {
+			IF_LOCK(ifn);
+			TAILQ_REMOVE(&ifnet, ifn, if_link);
+			ifa = TAILQ_FIRST(&ifn->if_addrhead);
+			while (ifa != NULL) {
+				TAILQ_REMOVE(&ifn->if_addrhead, ifa, ifa_link);
+				ExFreePool(ifa);
+				ifa = TAILQ_FIRST(&ifn->if_addrhead);
+			}
+			ExFreePool(ifn);
+			ifn = TAILQ_FIRST(&ifnet);
+		}
+		IFNET_WUNLOCK();
+	}
 	if (RcvContext != NULL) {
 		RcvContext->bActive = FALSE;
 		KeSetEvent(&RcvContext->event, IO_NO_INCREMENT, FALSE);
@@ -200,7 +301,8 @@ Unload(
 		ObDereferenceObject(TpObject);
 	}
 	if (TpHandle != NULL) {
-		ZwClose(TpHandle);
+		status = ZwClose(TpHandle);
+		DbgPrint("ZwClose#1, status=%d\n", status);
 	}
 
 	if (Tp6Object != NULL) {
@@ -208,7 +310,14 @@ Unload(
 	}
 	if (Tp6Handle != NULL) {
 		ZwClose(Tp6Handle);
+		DbgPrint("ZwClose#2, status=%d\n", status);
 	}
+
+	IFNET_LOCK_DESTROY();
+
+	SCTP_HEADER_DESTROY();
+	SCTP_BUF_DESTROY();
+
 	DbgPrint("Left from Unload\n");
 }
 
@@ -220,7 +329,7 @@ ClientPnPAddNetAddress(
     IN PTDI_PNP_CONTEXT Context)
 {
 	unsigned char *p;
-	struct ifnet *ifp;
+	struct ifnet *ifp, *ifp1;
 	struct ifaddr *ifa;
 
 	DbgPrint("ClientPnPAddNetAddress: DeviceName=%ws\n", DeviceName->Buffer);
@@ -254,18 +363,33 @@ ClientPnPAddNetAddress(
 		ifp = ExAllocatePool(NonPagedPool, sizeof(*ifp));
 		if (ifp == NULL) {
 			DbgPrint("ClientPnPAddNetAddress: Resource unavailable\n");
+			IFNET_WUNLOCK();
 			return;
 		}
 		RtlZeroMemory(ifp, sizeof(*ifp));
 		RtlInitUnicodeString(&ifp->if_xname, DeviceName->Buffer);
 		TAILQ_INIT(&ifp->if_addrhead);
 		IF_LOCK_INIT(ifp);
-		ifp->refcount = 1;
+		ifp->refcount = 2;
 
+		for (ifp->if_index = 0; ifp->if_index <= if_index; ifp->if_index++) {
+			TAILQ_FOREACH(ifp1, &ifnet, if_link) {
+				if (ifp1->if_index == ifp->if_index) {
+					break;
+				}
+			}
+			if (ifp1 == NULL) {
+				break;
+			}
+		}
+		if (ifp->if_index > if_index) {
+			if_index = ifp->if_index;
+		}
 		TAILQ_INSERT_TAIL(&ifnet, ifp, if_link);
 	}
 	IFNET_WUNLOCK();
 	IF_LOCK(ifp);
+	ifp->refcount--;
 
 	TAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
 		if ((Address->AddressType == TDI_ADDRESS_TYPE_IP &&
@@ -274,7 +398,9 @@ ClientPnPAddNetAddress(
 		    (Address->AddressType == TDI_ADDRESS_TYPE_IP6 &&
 		    ifa->ifa_addr.ss_family == AF_INET6 &&
 		    RtlCompareMemory(&((PTDI_ADDRESS_IP6)Address->Address)->sin6_addr,
-			&((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_addr, sizeof(struct in6_addr)))) {
+			&((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_addr, sizeof(struct in6_addr)) == sizeof(struct in6_addr) &&
+		    ((PTDI_ADDRESS_IP6)Address->Address)->sin6_scope_id ==
+		    ((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_scope_id)) {
 			break;
 		}
 	}
@@ -292,6 +418,7 @@ ClientPnPAddNetAddress(
 	}
 	RtlZeroMemory(ifa, sizeof(*ifa));
 	IFA_LOCK_INIT(ifa);
+	ifa->ifa_ifp = ifp;
 	ifa->refcount = 1;
 
 	switch (Address->AddressType) {
@@ -351,22 +478,41 @@ ClientPnPDelNetAddress(
 		}
 	}
 	if (ifp != NULL) {
-		IF_LOCK(ifp);
+		IF_INCR_REF(ifp);
 	}
-	IFNET_RUNLOCK();
 	if (ifp == NULL) {
 		DbgPrint("No such device....\n");
+		IFNET_RUNLOCK();
 		return;
 	}
+	IFNET_RUNLOCK();
+	IF_LOCK(ifp);
+	ifp->refcount--;
 
 	TAILQ_FOREACH(ifa, &ifp->if_addrhead, ifa_link) {
+#if 0
+	switch (ifa->ifa_addr.ss_family) {
+	case AF_INET:
+		p = (unsigned char *)&((struct sockaddr_in *)&ifa->ifa_addr)->sin_addr;
+		DbgPrint("IPv4 address: %u.%u.%u.%u\n",
+		    p[0], p[1], p[2], p[3]);
+		break;
+	case TDI_ADDRESS_TYPE_IP6:
+		DbgPrint("IPv6 address: %s%%%d\n",
+		    ip6_sprintf((struct in6_addr *)&((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_addr),
+		    ((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_scope_id);
+		break;
+	}
+#endif
 		if ((Address->AddressType == TDI_ADDRESS_TYPE_IP &&
 		    ifa->ifa_addr.ss_family == AF_INET &&
 		    ((PTDI_ADDRESS_IP)Address->Address)->in_addr == ((struct sockaddr_in *)&ifa->ifa_addr)->sin_addr.s_addr) ||
 		    (Address->AddressType == TDI_ADDRESS_TYPE_IP6 &&
 		    ifa->ifa_addr.ss_family == AF_INET6 &&
 		    RtlCompareMemory(&((PTDI_ADDRESS_IP6)Address->Address)->sin6_addr,
-			&((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_addr, sizeof(struct in6_addr)))) {
+			&((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_addr, sizeof(struct in6_addr)) == sizeof(struct in6_addr) &&
+		    ((PTDI_ADDRESS_IP6)Address->Address)->sin6_scope_id ==
+		    ((struct sockaddr_in6 *)&ifa->ifa_addr)->sin6_scope_id)) {
 			break;
 		}
 	}
@@ -374,12 +520,11 @@ ClientPnPDelNetAddress(
 		IF_UNLOCK(ifp);
 		DbgPrint("No such address....\n");
 		return;
-	} else {
-		TAILQ_REMOVE(&ifp->if_addrhead, ifa, ifa_link);
-		IFAFREE(ifa);
-		IF_UNLOCK(ifp);
 	}
 
+	TAILQ_REMOVE(&ifp->if_addrhead, ifa, ifa_link);
+	IFAFREE(ifa);
+	IF_UNLOCK(ifp);
 #if 0
 	if (TAILQ_EMPTY(&ifp->if_addrhead)) {
 		TAILQ_REMOVE(&ifnet, ifp, if_link);
@@ -387,59 +532,229 @@ ClientPnPDelNetAddress(
 #endif
 }
 
+typedef struct {
+	unsigned long ipsi_forwarding;
+	unsigned long ipsi_defaultttl;
+	unsigned long ipsi_inreceives;
+	unsigned long ipsi_inhdrerrors;
+	unsigned long ipsi_inaddrerrors;
+	unsigned long ipsi_forwdatagrams;
+	unsigned long ipsi_inunknownprotos;
+	unsigned long ipsi_indiscards;
+	unsigned long ipsi_indelivers;
+	unsigned long ipsi_outrequests;
+	unsigned long ipsi_routingdiscards;
+	unsigned long ipsi_outdiscards;
+	unsigned long ipsi_outnoroutes;
+	unsigned long ipsi_reasmtimeout;
+	unsigned long ipsi_reasmreqds;
+	unsigned long ipsi_reasmoks;
+	unsigned long ipsi_reasmfails;
+	unsigned long ipsi_fragoks;
+	unsigned long ipsi_fragfails;
+	unsigned long ipsi_fragcreates;
+	unsigned long ipsi_numif;
+	unsigned long ipsi_numaddr;
+	unsigned long ipsi_numroutes;
+} IPSNMPInfo;
 
-NTSTATUS
-SCTPDispatch(
-    IN PDEVICE_OBJECT deviceObject,
-    IN PIRP irp)
+typedef struct {
+	unsigned long iae_addr;
+	unsigned long iae_index;
+	unsigned long iae_mask;
+	unsigned long iae_bcastaddr;
+	unsigned long iae_reasmsize;
+	unsigned short iae_context;
+	unsigned short iae_pad;
+} IPAddrEntry;
+
+typedef struct IPRouteEntry {
+	ulong ire_addr;
+	ulong ire_index;
+	ulong ire_metric;
+	ulong ire_unk1;
+	ulong ire_unk2;
+	ulong ire_unk3;
+	ulong ire_gw;
+	ulong ire_unk4;
+	ulong ire_unk5;
+	ulong ire_unk6;
+	ulong ire_mask;
+	ulong ire_unk7;
+	ulong ire_unk8;
+} IPRouteEntry;
+
+VOID
+RetrieveRoute(VOID)
 {
-	PIO_STACK_LOCATION irpSp;
 	NTSTATUS status;
+	IO_STATUS_BLOCK statusBlock;
+	TCP_REQUEST_QUERY_INFORMATION_EX tcp_req;
+	IPSNMPInfo ipSnmpInfo;
+	IPAddrEntry *ipAddr;
+	ULONG ipAddrSize = 0;
+	IPRouteEntry *ipRoute;
+	ULONG ipRouteSize = 0;
+	ULONG i, j;
 
-	DbgPrint("Enter into SCTPDispatch\n");
+	// InputBufferLength=>36, OutputBufferLength=>92
+	// getInformation: tei_entity => 769, toi_class => 512, toi_type =>256, toi_id=>1
+	RtlZeroMemory(&tcp_req, sizeof(tcp_req));
+	tcp_req.ID.toi_entity.tei_entity = CL_NL_ENTITY;
+	tcp_req.ID.toi_entity.tei_instance = 0;
+	tcp_req.ID.toi_class = INFO_CLASS_PROTOCOL;
+	tcp_req.ID.toi_type = INFO_TYPE_PROVIDER;
+	tcp_req.ID.toi_id = 1; //IP_MIB_STATS_ID
 
-	irpSp = IoGetCurrentIrpStackLocation(irp);
+	RtlZeroMemory(&ipSnmpInfo, sizeof(ipSnmpInfo));
 
-	switch (irpSp->MajorFunction) {
-	case IRP_MJ_CREATE:
-		status = SCTPCreate(deviceObject, irp, irpSp);
-		break;
-
-	case IRP_MJ_CLEANUP:
-		status = SCTPCleanup(deviceObject, irp, irpSp);
-		break;
-
-	case IRP_MJ_CLOSE:
-		status = SCTPClose(deviceObject, irp, irpSp);
-		break;
-
-	case IRP_MJ_DEVICE_CONTROL:
-		status = TdiMapUserRequest(deviceObject, irp, irpSp);
-
-		if (status == STATUS_SUCCESS) {
-			status = SCTPDispatchInternalDeviceControl(deviceObject, irp, irpSp);
-			break;
-		}
-
-		status = SCTPDispatchDeviceControl(deviceObject, irp, irpSp);
-		break;
-
-	case IRP_MJ_QUERY_SECURITY:
-	case IRP_MJ_WRITE:
-	case IRP_MJ_READ:
-		status = STATUS_INVALID_DEVICE_REQUEST;
-		break;
+	status = ZwDeviceIoControlFile(TpHandle,
+	    NULL,
+	    NULL,
+	    NULL,
+	    &statusBlock,
+	    IOCTL_TCP_QUERY_INFORMATION_EX,
+	    &tcp_req,
+	    sizeof(tcp_req),
+	    &ipSnmpInfo,
+	    sizeof(ipSnmpInfo));
+	if (status != STATUS_SUCCESS) {
+		DbgPrint("ZwDeviceIoControlFile failed, error=%08x\n", status);
+		return;
 	}
 
-	irp->IoStatus.Status = status;
-	irp->IoStatus.Information = 0;
+	tcp_req.ID.toi_id = 0x102; //IP_MIB_ADDRTABLE_ENTRY_ID;
+	DbgPrint("ipsi_numaddr=>%u\n", ipSnmpInfo.ipsi_numaddr);
+	ipAddrSize = sizeof(IPAddrEntry) * ipSnmpInfo.ipsi_numaddr;
+	ipAddr = ExAllocatePool(PagedPool, ipAddrSize);
+	if (ipAddr == NULL) {
+		return;
+	}
+	RtlZeroMemory(ipAddr, ipAddrSize);
+	status = ZwDeviceIoControlFile(TpHandle,
+	    NULL,
+	    NULL,
+	    NULL,
+	    &statusBlock,
+	    IOCTL_TCP_QUERY_INFORMATION_EX,
+	    &tcp_req,
+	    sizeof(tcp_req),
+	    ipAddr,
+	    ipAddrSize);
+	if (status != STATUS_SUCCESS) {
+		DbgPrint("ZwDeviceIoControlFile failed, error=%08x\n", status);
+		return;
+	}
 
-	IoCompleteRequest(irp, IO_NETWORK_INCREMENT);
+	for (i = 0; i < ipSnmpInfo.ipsi_numaddr; i++) {
+		uchar *addr = (uchar *)&ipAddr[i].iae_addr;
+		uchar *mask = (uchar *)&ipAddr[i].iae_mask;
+		uchar *broad = (uchar *)&ipAddr[i].iae_bcastaddr;
 
-	DbgPrint("Leave from SCTPDispatch\n");
-	return status;
+		DbgPrint("ADDR: %ld.%ld.%ld.%ld, MASK: %ld.%ld.%ld.%ld, BROAD: %ld.%ld.%ld.%ld, ifidx: %d\n",
+		    addr[0], addr[1], addr[2], addr[3],
+		    mask[0], mask[1], mask[2], mask[3],
+		    broad[0], broad[1], broad[2], broad[3],
+		    ipAddr[i].iae_index);
+	}
+
+	DbgPrint("ipsi_numroutes=>%u\n", ipSnmpInfo.ipsi_numroutes);
+	tcp_req.ID.toi_id = 0x101; //IP_MIB_ROUTETABLE_ENTRY_ID
+
+	ipRouteSize = sizeof(IPRouteEntry) * ipSnmpInfo.ipsi_numroutes;
+	ipRoute = ExAllocatePool(PagedPool, ipRouteSize);
+	if (ipRoute == NULL) {
+		ExFreePool(ipAddr);
+		return;
+	}
+	RtlZeroMemory(ipRoute, ipRouteSize);
+	status = ZwDeviceIoControlFile(TpHandle,
+	    NULL,
+	    NULL,
+	    NULL,
+	    &statusBlock,
+	    IOCTL_TCP_QUERY_INFORMATION_EX,
+	    &tcp_req,
+	    sizeof(tcp_req),
+	    ipRoute,
+	    ipRouteSize);
+	if (status != STATUS_SUCCESS) {
+		DbgPrint("ZwDeviceIoControlFile failed, error=%08x\n", status);
+		ExFreePool(ipAddr);
+		ExFreePool(ipRoute);
+		return;
+	}
+
+	for (i = 0; i < ipSnmpInfo.ipsi_numroutes; i++) {
+		uchar *addr = (uchar *)&ipRoute[i].ire_addr;
+		uchar *mask = (uchar *)&ipRoute[i].ire_mask;
+		uchar *gw = (uchar *)&ipRoute[i].ire_gw;
+		uchar _ifaddr[4] = {0x00, 0x00, 0x00, 0x00};
+		uchar *ifaddr = _ifaddr;
+
+		for (j = 0; j < ipSnmpInfo.ipsi_numroutes; j++) {
+			if (ipAddr[j].iae_index == ipRoute[i].ire_index) {
+				ifaddr = (uchar *)&ipAddr[j].iae_addr;
+				break;
+			}
+		}
+		DbgPrint("NEXTHOP: %ld.%ld.%ld.%ld, MASK: %ld.%ld.%ld.%ld, GW: %ld.%ld.%ld.%ld, IF: %ld.%ld.%ld.%ld\n",
+		    addr[0], addr[1], addr[2], addr[3],
+		    mask[0], mask[1], mask[2], mask[3],
+		    gw[0], gw[1], gw[2], gw[3],
+		    ifaddr[0], ifaddr[1], ifaddr[2], ifaddr[3]);
+	}
+	ExFreePool(ipAddr);
+	ExFreePool(ipRoute);
 }
 
+VOID
+SetRoute(VOID)
+{
+	NTSTATUS status;
+	IO_STATUS_BLOCK statusBlock;
+	uchar data[] = {
+	    0x01,0x03,0x00,0x00,
+	    0x00,0x00,0x00,0x00,
+	    0x00,0x02,0x00,0x00,
+	    0x00,0x01,0x00,0x00,
+	    0x01,0x01,0x00,0x00,
+	    0x34,0x00,0x00,0x00,
+	    0x82,0x36,0x0E,0x01, // 130.54.14.1
+	    0x03,0x00,0x01,0x00, // IF
+	    0xFE,0xFF,0xFF,0xFF, // Metric1
+	    0xFD,0xFF,0xFF,0xFF, // Metric2
+	    0xFC,0xFF,0xFF,0xFF, // Metric3
+	    0xFB,0xFF,0xFF,0xFF, // Metric4
+	    0xC0,0xA8,0x92,0x02, // 192.168.146.2
+#if 0
+	    0x04,0x00,0x00,0x00, // dwForwardType
+#else
+	    0x02,0x00,0x00,0x00, // dwForwardType
+#endif
+	    0x16,0x27,0x00,0x00, // dwForwardProto
+	    0x14,0x00,0x00,0x00, // dwForwardAge
+	    0xFF,0xFF,0xFF,0xFF, // Netmask
+	    0xFA,0xFF,0xFF,0xFF, // Metric5
+	    0x00,0x00,0x00,0x00,
+	    0x00,0x00,0x00,
+	};
+
+	status = ZwDeviceIoControlFile(TpHandle,
+	    NULL,
+	    NULL,
+	    NULL,
+	    &statusBlock,
+	    1212420,
+	    &data,
+	    sizeof(data),
+	    NULL,
+	    0);
+	if (status != STATUS_SUCCESS) {
+		DbgPrint("ZwDeviceIoControlFile failed, error=%08x\n", status);
+		return;
+	}
+}
 
 NTSTATUS
 OpenRawSctp(
@@ -584,7 +899,7 @@ OpenRawSctp(
 		    tcp_req,
 		    sizeof(*tcp_req) + sizeof(hdrIncl),
 		    NULL,
-		    NULL);
+		    0);
 		if (status != STATUS_SUCCESS) {
 			DbgPrint("ZwDeviceIoControlFile for IP_HDRINCL failed, code=%d\n", status);
 			ObDereferenceObject(*ppObject);
@@ -635,7 +950,7 @@ OpenRawSctp(
 		    tcp_req,
 		    sizeof(*tcp_req) + sizeof(hdrIncl),
 		    NULL,
-		    NULL);
+		    0);
 		if (status != STATUS_SUCCESS) {
 			DbgPrint("ZwDeviceIoControlFile for IPV6_HDRINCL failed, code=%d\n", status);
 			ObDereferenceObject(*ppObject);
@@ -656,7 +971,7 @@ OpenRawSctp(
 		    tcp_req,
 		    sizeof(*tcp_req) + sizeof(hdrIncl),
 		    NULL,
-		    NULL);
+		    0);
 		if (status != STATUS_SUCCESS) {
 			DbgPrint("ZwDeviceIoControlFile for IPV6_PKTINFO failed, code=%d\n", status);
 			ObDereferenceObject(*ppObject);
@@ -677,7 +992,7 @@ OpenRawSctp(
 		    tcp_req,
 		    sizeof(*tcp_req) + sizeof(hdrIncl),
 		    NULL,
-		    NULL);
+		    0);
 		if (status != STATUS_SUCCESS) {
 			DbgPrint("ZwDeviceIoControlFile for IPV6_PROTECTION_LEVEL failed, code=%d\n", status);
 			ObDereferenceObject(*ppObject);
@@ -1122,7 +1437,9 @@ SCTPReceiveThread(IN PVOID _ctx)
 			iph = mtod(SCTP_HEADER_TO_CHAIN(pkt), struct ip *);
 			if (iph->ip_v == IPVERSION) {
 				DbgPrint("before sctp_input\n");
+#if 1
 				sctp_input(pkt, 20);
+#endif
 				DbgPrint("after sctp_input\n");
 			} else if (iph->ip_v == (IPV6_VERSION >> 4)) {
 				DbgPrint("before sctp6_input\n");
@@ -1186,4 +1503,49 @@ ip6_sprintf(addr)
 	}
 	*--cp = 0;
 	return (ip6buf[ip6round]);
+}
+
+/* XXX Need to change following routines. */
+unsigned int RandomValue = 0;
+
+unsigned int // Returns: A random value between 1 and 2^32.
+Random(void)
+{
+    //
+    // The algorithm is R = (aR + c) mod m, where R is the random number,
+    // a is a magic multiplier, c is a constant, and the modulus m is the
+    // maximum number of elements in the period.  We chose our m to be 2^32
+    // in order to get the mod operation for free.
+    // BUGBUG: What about concurrent calls?
+    //
+    RandomValue = (1664525 * RandomValue) + 1013904223;
+
+    return RandomValue;
+}
+
+void
+SeedRandom(uint Seed)
+{
+    int i;
+
+    //
+    // Incorporate the seed into our random value.
+    //
+    RandomValue ^= Seed;
+
+    //
+    // Stir the bits.
+    //
+    for (i = 0; i < 100; i++)
+        (void) Random();
+}
+
+void
+read_random(uint8_t *buf, unsigned int len)
+{
+	uint8_t *ptr;
+
+	for (ptr = buf; ptr < buf + len; ptr += sizeof(unsigned int)) {
+		*((unsigned int *)ptr) = Random();
+	}
 }
