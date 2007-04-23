@@ -225,6 +225,7 @@ sctp_free_ifa(struct sctp_ifa *sctp_ifap)
 {
 	int ret;
 	SCTP_LADDR_DECR_REF(sctp_ifap);
+	DbgPrint("sctp_ifap->refcount=>%d\n", sctp_ifap->refcount);
 	if (sctp_ifap->refcount == 1) {
 		/* We zero'd the count */
 		SCTP_FREE(sctp_ifap);
@@ -313,7 +314,7 @@ sctp_add_addr_to_vrf(uint32_t vrfid, void *ifn, uint32_t ifn_index,
 #endif
 		return (NULL);
 	}
-	memset(sctp_ifap, 0, sizeof(sctp_ifap));
+	memset(sctp_ifap, 0, sizeof(*sctp_ifap));
 	sctp_ifap->ifn_p = sctp_ifnp;
 	atomic_add_int(&sctp_ifnp->refcount, 1);
 
@@ -2119,7 +2120,6 @@ sctp_inpcb_alloc(struct socket *so)
 	/* How long is a cookie good for ? */
 	m->def_cookie_life = sctp_valid_cookie_life_default;
 
-#if 0
 	/*
 	 * Initialize authentication parameters
 	 */
@@ -2130,7 +2130,6 @@ sctp_inpcb_alloc(struct socket *so)
 	/* add default NULL key as key id 0 */
 	null_key = sctp_alloc_sharedkey();
 	sctp_insert_sharedkey(&m->shared_keys, null_key);
-#endif /* #if 0 */
 #ifdef SCTP_PER_SOCKET_LOCKING
 	SCTP_SOCKET_UNLOCK(SCTP_INP_SO(inp), 1);
 #endif
@@ -2363,6 +2362,7 @@ sctp_inpcb_bind(struct socket *so, struct sockaddr *addr, struct proc *p)
 #endif				/* SCTP_DEBUG */
 	if ((inp->sctp_flags & SCTP_PCB_FLAGS_UNBOUND) == 0) {
 		/* already did a bind, subsequent binds NOT allowed ! */
+		DbgPrint("hoge#1\n");
 		return (EINVAL);
 	}
 	if (addr != NULL) {
@@ -2372,10 +2372,13 @@ sctp_inpcb_bind(struct socket *so, struct sockaddr *addr, struct proc *p)
 			/* IPV6_V6ONLY socket? */
 			if (SCTP_IPV6_V6ONLY(ip_inp)) {
 				return (EINVAL);
+				DbgPrint("hoge#2\n");
 			}
 #ifdef HAVE_SALEN
-			if (addr->sa_len != sizeof(*sin))
+			if (addr->sa_len != sizeof(*sin)) {
+				DbgPrint("hoge#3\n");
 				return (EINVAL);
+			}
 #endif
 
 			sin = (struct sockaddr_in *)addr;
@@ -2496,6 +2499,7 @@ sctp_inpcb_bind(struct socket *so, struct sockaddr *addr, struct proc *p)
 			SCTP_UNLOCK_EXC(sctppcbinfo.ipi_ep_mtx);
 #endif
 			SCTP_INP_INFO_WUNLOCK();
+			DbgPrint("hoge#4\n");
 			return (EADDRNOTAVAIL);
 		}
 		SCTP_INP_WLOCK(inp);
@@ -2509,6 +2513,7 @@ sctp_inpcb_bind(struct socket *so, struct sockaddr *addr, struct proc *p)
 				SCTP_UNLOCK_EXC(sctppcbinfo.ipi_ep_mtx);
 #endif
 				SCTP_INP_INFO_WUNLOCK();
+				DbgPrint("hoge#5\n");
 				return (EADDRNOTAVAIL);
 			}
 		}
@@ -2592,6 +2597,7 @@ sctp_inpcb_bind(struct socket *so, struct sockaddr *addr, struct proc *p)
 		SCTP_UNLOCK_EXC(sctppcbinfo.ipi_ep_mtx);
 #endif
 		SCTP_INP_INFO_WUNLOCK();
+		DbgPrint("hoge#6\n");
 		return (EINVAL);
 	}
 	/* ok we look clear to give out this port, so lets setup the binding */
@@ -2884,7 +2890,8 @@ sctp_inpcb_free(struct sctp_inpcb *inp, int immediate, int from)
 				/* Left with Data unread */
 				struct mbuf *op_err;
 
-				SCTP_BUF_ALLOC(op_err, (sizeof(struct sctp_paramhdr) + sizeof(uint32_t)));
+				op_err = sctp_get_mbuf_for_msg(sizeof(struct sctp_paramhdr) + sizeof(uint32_t),
+							       0, M_DONTWAIT, 1, MT_DATA);
 				if (op_err) {
 					/* Fill in the user initiated abort */
 					struct sctp_paramhdr *ph;
@@ -2957,7 +2964,8 @@ sctp_inpcb_free(struct sctp_inpcb *inp, int immediate, int from)
 				    (asoc->asoc.state & SCTP_STATE_PARTIAL_MSG_LEFT)) {
 					struct mbuf *op_err;
 				abort_anyway:
-					SCTP_BUF_ALLOC(op_err, sizeof(struct sctp_paramhdr) + sizeof(uint32_t));
+					op_err = sctp_get_mbuf_for_msg((sizeof(struct sctp_paramhdr) + sizeof(uint32_t)),
+								       0, M_DONTWAIT, 1, MT_DATA);
 					if (op_err) {
 						/* Fill in the user initiated abort */
 						struct sctp_paramhdr *ph;
@@ -3034,7 +3042,8 @@ sctp_inpcb_free(struct sctp_inpcb *inp, int immediate, int from)
 			struct mbuf *op_err;
 			uint32_t *ippp;
 
-			SCTP_BUF_ALLOC(op_err, (sizeof(struct sctp_paramhdr) + sizeof(uint32_t)));
+			op_err = sctp_get_mbuf_for_msg((sizeof(struct sctp_paramhdr) + sizeof(uint32_t)),
+						       0, M_DONTWAIT, 1, MT_DATA);
 			if (op_err) {
 				/* Fill in the user initiated abort */
 				struct sctp_paramhdr *ph;
@@ -3198,7 +3207,6 @@ sctp_inpcb_free(struct sctp_inpcb *inp, int immediate, int from)
 #else
 	ip_pcb->inp_vflag = 0;
 #endif
-#if 0 /* XXX */
 	/* free up authentication fields */
 	if (inp->sctp_ep.local_auth_chunks != NULL)
 		sctp_free_chunklist(inp->sctp_ep.local_auth_chunks);
@@ -3211,7 +3219,6 @@ sctp_inpcb_free(struct sctp_inpcb *inp, int immediate, int from)
 		sctp_free_sharedkey(shared_key);
 		shared_key = LIST_FIRST(&inp->sctp_ep.shared_keys);
 	}
-#endif
 
 #if defined(SCTP_PER_SOCKET_LOCKING)
 	if (!SCTP_MTX_TRYLOCK(sctppcbinfo.it_mtx)) {
@@ -3885,9 +3892,7 @@ sctp_remove_net(struct sctp_tcb *stcb, struct sctp_nets *net)
 
 		lnet = TAILQ_FIRST(&asoc->nets);
 		/* Try to find a confirmed primary */
-#if 0 /* XXX */
 		asoc->primary_destination = sctp_find_alternate_net(stcb, lnet, 0);
-#endif
 	}
 	if (net == asoc->last_data_chunk_from) {
 		/* Reset primary */
@@ -4556,7 +4561,6 @@ sctp_free_assoc(struct sctp_inpcb *inp, struct sctp_tcb *stcb, int from_inpcbfre
 		SCTP_BUF_FREE_ALL(asoc->last_asconf_ack_sent);
 		asoc->last_asconf_ack_sent = NULL;
 	}
-#if 0 /* XXX */
 	/* clean up auth stuff */
 	if (asoc->local_hmacs)
 		sctp_free_hmaclist(asoc->local_hmacs);
@@ -4576,7 +4580,6 @@ sctp_free_assoc(struct sctp_inpcb *inp, struct sctp_tcb *stcb, int from_inpcbfre
 		sctp_free_sharedkey(shared_key);
 		shared_key = LIST_FIRST(&asoc->shared_keys);
 	}
-#endif
 
 	/* Insert new items here :> */
 
@@ -5662,7 +5665,6 @@ sctp_load_addresses_from_init(struct sctp_tcb *stcb, struct mbuf *m,
 			/* Peer supports ECN-nonce */
 			stcb->asoc.peer_supports_ecn_nonce = 1;
 			stcb->asoc.ecn_nonce_allowed = 1;
-#if 0 /* XXX */
 		} else if (ptype == SCTP_RANDOM) {
 			if (plen > sizeof(random_store))
 				break;
@@ -5743,7 +5745,6 @@ sctp_load_addresses_from_init(struct sctp_tcb *stcb, struct mbuf *m,
 				    stcb->asoc.peer_auth_chunks);
 			}
 			got_chklist = 1;
-#endif /* #if 0 */
 		} else if ((ptype == SCTP_HEARTBEAT_INFO) ||
 			   (ptype == SCTP_STATE_COOKIE) ||
 			   (ptype == SCTP_UNRECOG_PARAM) ||
@@ -5790,7 +5791,6 @@ sctp_load_addresses_from_init(struct sctp_tcb *stcb, struct mbuf *m,
 			}
 		}
 	}
-#if 0 /* XXX */
 	/* validate authentication required parameters */
 	if (got_random && got_hmacs) {
 		stcb->asoc.peer_supports_auth = 1;
@@ -5846,7 +5846,6 @@ sctp_load_addresses_from_init(struct sctp_tcb *stcb, struct mbuf *m,
 #endif
 	sctp_clear_cachedkeys(stcb, stcb->asoc.authinfo.assoc_keyid);
 	sctp_clear_cachedkeys(stcb, stcb->asoc.authinfo.recv_keyid);
-#endif
 
 	return (0);
 }
@@ -6157,9 +6156,7 @@ sctp_drain_mbufs(struct sctp_inpcb *inp, struct sctp_tcb *stcb)
 		}
 		asoc->last_revoke_count = cnt;
 		SCTP_OS_TIMER_STOP(&stcb->asoc.dack_timer.timer);
-#if 0 /* XXX */
 		sctp_send_sack(stcb);
-#endif
 		sctp_chunk_output(stcb->sctp_ep, stcb, SCTP_OUTPUT_FROM_DRAIN);
 		reneged_asoc_ids[reneged_at] = sctp_get_associd(stcb);
 		reneged_at++;

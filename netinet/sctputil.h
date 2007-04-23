@@ -112,11 +112,7 @@ void sctp_iterator_worker(void);
 int find_next_best_mtu(int);
 
 void
-#if !defined(__Windows__)
 sctp_timeout_handler(void *);
-#else
-sctp_timeout_handler(PKDPC, void *, void *, void *);
-#endif
 
 uint32_t
 sctp_calculate_rto(struct sctp_tcb *, struct sctp_association *,
@@ -228,13 +224,14 @@ sctp_free_bufspace(struct sctp_tcb *, struct sctp_association *,
     struct sctp_tmit_chunk *);
 
 #else
-#if !defined(__Windows__)
 #define sctp_free_bufspace(stcb, asoc, tp1, chk_cnt)  \
 do { \
 	if (tp1->data != NULL) { \
-                atomic_add_int(&((asoc)->chunks_on_out_queue), -chk_cnt); \
+		DbgPrint("sctp_free_bufspace: chunks_on_out_queue=%d,chk_cnt=%d\n", (asoc)->chunks_on_out_queue, chk_cnt); \
+                atomic_add_int(&((asoc)->chunks_on_out_queue), -(chk_cnt)); \
+		DbgPrint("sctp_free_bufspace: chunks_on_out_queue=%d\n", (asoc)->chunks_on_out_queue); \
 		if ((asoc)->total_output_queue_size >= tp1->book_size) { \
-			atomic_add_int(&((asoc)->total_output_queue_size), -tp1->book_size); \
+			atomic_add_int(&((asoc)->total_output_queue_size), -(tp1)->book_size); \
 		} else { \
 			(asoc)->total_output_queue_size = 0; \
 		} \
@@ -248,32 +245,9 @@ do { \
 		} \
         } \
 } while (0)
-#else
-#define sctp_free_bufspace(stcb, asoc, tp1, chk_cnt)  \
-do { \
-	if (tp1->data != NULL) { \
-		SCTP_TCB_LOCK((stcb)); \
-                (asoc)->chunks_on_out_queue =- chk_cnt; \
-		if ((asoc)->total_output_queue_size >= tp1->book_size) { \
-			(asoc)->total_output_queue_size -= tp1->book_size; \
-		} else { \
-			(asoc)->total_output_queue_size = 0; \
-		} \
-		SCTP_TCB_UNLOCK((stcb)); \
-   	        if (stcb->sctp_socket && ((stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_TCPTYPE) || \
-	            (stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_IN_TCPPOOL))) { \
-			if (stcb->sctp_socket->so_snd.sb_cc >= tp1->book_size) { \
-			} else { \
-				stcb->sctp_socket->so_snd.sb_cc = 0; \
-			} \
-		} \
-        } \
-} while (0)
-#endif
 
 #endif
 
-#if !defined(__Windows__)
 #define sctp_free_spbufspace(stcb, asoc, sp)  \
 do { \
  	if (sp->data != NULL) { \
@@ -296,18 +270,13 @@ do { \
 
 #define sctp_snd_sb_alloc(stcb, sz)  \
 do { \
-	atomic_add_int(&stcb->asoc.total_output_queue_size,sz); \
+	atomic_add_int(&stcb->asoc.total_output_queue_size, sz); \
 	if ((stcb->sctp_socket != NULL) && \
 	    ((stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_TCPTYPE) || \
 	     (stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_IN_TCPPOOL))) { \
 		atomic_add_int(&stcb->sctp_socket->so_snd.sb_cc,sz); \
 	} \
 } while (0)
-
-#else
-#define	sctp_free_spbufspace(stcb, asoc, sp)
-#define	sctp_snd_sb_alloc(stcb, sz)
-#endif
 
 #if defined(__NetBSD__)
 int

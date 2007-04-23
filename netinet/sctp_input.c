@@ -619,6 +619,10 @@ sctp_handle_shutdown(struct sctp_shutdown_chunk *cp,
 			}
 		}
 	}
+	DbgPrint("send_queue=%d,sent_queue=%d,some_on_streamwheel=%d\n",
+	    TAILQ_EMPTY(&asoc->send_queue),
+	    TAILQ_EMPTY(&asoc->sent_queue),
+	    some_on_streamwheel);
 	if (!TAILQ_EMPTY(&asoc->send_queue) ||
 	    !TAILQ_EMPTY(&asoc->sent_queue) ||
 	    some_on_streamwheel) {
@@ -1089,7 +1093,8 @@ sctp_process_cookie_existing(struct mbuf *m, int iphlen, int offset,
 		struct sctp_paramhdr *ph;
 
 		sctp_send_shutdown_ack(stcb, stcb->asoc.primary_destination);
-		SCTP_BUF_ALLOC(op_err, sizeof(struct sctp_paramhdr));
+		op_err = sctp_get_mbuf_for_msg(sizeof(struct sctp_paramhdr),
+					       0, M_DONTWAIT, 1, MT_DATA);
 		if (op_err == NULL) {
 			/* FOOBAR */
 			return (NULL);
@@ -1556,6 +1561,7 @@ sctp_process_cookie_new(struct mbuf *m, int iphlen, int offset,
 	vrf = panda_get_vrf_from_call(); /* from packet? */
 #endif
 
+	DbgPrint("hoge#1\n");
 	/*
 	 * find and validate the INIT chunk in the cookie (peer's info) the
 	 * INIT should start after the cookie-echo header struct (chunk
@@ -1574,6 +1580,7 @@ sctp_process_cookie_new(struct mbuf *m, int iphlen, int offset,
 #endif				/* SCTP_DEBUG */
 		return (NULL);
 	}
+	DbgPrint("hoge#2\n");
 	chk_length = ntohs(init_cp->ch.chunk_length);
 	if (init_cp->ch.chunk_type != SCTP_INITIATION) {
 #ifdef SCTP_DEBUG
@@ -1583,6 +1590,7 @@ sctp_process_cookie_new(struct mbuf *m, int iphlen, int offset,
 #endif				/* SCTP_DEBUG */
 		return (NULL);
 	}
+	DbgPrint("hoge#3\n");
 	initack_offset = init_offset + SCTP_SIZE32(chk_length);
 	/*
 	 * find and validate the INIT-ACK chunk in the cookie (my info) the
@@ -1600,10 +1608,12 @@ sctp_process_cookie_new(struct mbuf *m, int iphlen, int offset,
 #endif				/* SCTP_DEBUG */
 		return (NULL);
 	}
+	DbgPrint("hoge#4\n");
 	chk_length = ntohs(initack_cp->ch.chunk_length);
 	if (initack_cp->ch.chunk_type != SCTP_INITIATION_ACK) {
 		return (NULL);
 	}
+	DbgPrint("hoge#5\n");
 	/*
 	 * NOTE: We can't use the INIT_ACK's chk_length to determine the
 	 * "initack_limit" value.  This is because the chk_length field
@@ -1632,6 +1642,7 @@ sctp_process_cookie_new(struct mbuf *m, int iphlen, int offset,
 		    sh, op_err);
 		return (NULL);
 	}
+	DbgPrint("hoge#6\n");
 	/* get the correct sctp_nets */
 	*netp = sctp_findnet(stcb, init_src);
 	asoc = &stcb->asoc;
@@ -1655,6 +1666,7 @@ sctp_process_cookie_new(struct mbuf *m, int iphlen, int offset,
 		    sh, op_err);
 		return (NULL);
 	}
+	DbgPrint("hoge#7\n");
 	/* process the INIT-ACK info (my info) */
 	old_tag = asoc->my_vtag;
 	asoc->assoc_id = asoc->my_vtag = ntohl(initack_cp->init.initiate_tag);
@@ -1674,6 +1686,7 @@ sctp_process_cookie_new(struct mbuf *m, int iphlen, int offset,
 		sctp_free_assoc(inp, stcb, SCTP_NORMAL_PROC, SCTP_FROM_SCTP_INPUT+SCTP_LOC_16);
 		return (NULL);
 	}
+	DbgPrint("hoge#8\n");
 	/* load all addresses */
 	if (sctp_load_addresses_from_init(stcb, m, iphlen,
 	    init_offset + sizeof(struct sctp_init_chunk), initack_offset, sh,
@@ -1681,6 +1694,7 @@ sctp_process_cookie_new(struct mbuf *m, int iphlen, int offset,
 		sctp_free_assoc(inp, stcb, SCTP_NORMAL_PROC, SCTP_FROM_SCTP_INPUT+SCTP_LOC_17);
 		return (NULL);
 	}
+	DbgPrint("hoge#9\n");
 	/*
 	 * verify any preceding AUTH chunk that was skipped
 	 */
@@ -1758,6 +1772,7 @@ sctp_process_cookie_new(struct mbuf *m, int iphlen, int offset,
 		sctp_free_assoc(inp, stcb, SCTP_NORMAL_PROC, SCTP_FROM_SCTP_INPUT+SCTP_LOC_19);
 		return (NULL);
 	}
+	DbgPrint("hoge#10\n");
 
 	sctp_check_address_list(stcb, m,
 	    initack_offset + sizeof(struct sctp_init_ack_chunk),
@@ -1845,9 +1860,11 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 	}
 #endif
 
+	DbgPrint("foo#1\n");
 	if (inp_p == NULL) {
 		return (NULL);
 	}
+	DbgPrint("foo#2\n");
 	/* First get the destination address setup too. */
 	iph = mtod(m, struct ip *);
 	if (iph->ip_v == IPVERSION) {
@@ -1881,6 +1898,7 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 	} else {
 		return (NULL);
 	}
+	DbgPrint("foo#3\n");
 
 	cookie = &cp->cookie;
 	cookie_offset = offset + sizeof(struct sctp_chunkhdr);
@@ -1898,6 +1916,7 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 		 */
 		return (NULL);
 	}
+	DbgPrint("foo#4\n");
 	if (cookie_len > size_of_pkt ||
 	    cookie_len < sizeof(struct sctp_cookie_echo_chunk) +
 	    sizeof(struct sctp_init_chunk) +
@@ -1905,6 +1924,7 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 		/* cookie too long!  or too small */
 		return (NULL);
 	}
+	DbgPrint("foo#5\n");
 	/*
 	 * split off the signature into its own mbuf (since it should not be
 	 * calculated in the sctp_hmac_m() call).
@@ -1915,11 +1935,13 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 		/* XXX this may already be accounted for earlier... */
 		return (NULL);
 	}
+	DbgPrint("foo#6\n");
 	SCTP_BUF_SPLIT(m_sig, m, sig_offset, M_DONTWAIT);
 	if (m_sig == NULL) {
 		/* out of memory or ?? */
 		return (NULL);
 	}
+	DbgPrint("foo#7\n");
 
 	/*
 	 * compute the signature/digest for the cookie
@@ -1954,6 +1976,7 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 		SCTP_BUF_FREE_ALL(m_sig);
 		return (NULL);
 	}
+	DbgPrint("foo#8\n");
 	/* compare the received digest with the computed digest */
 	if (memcmp(calc_sig, sig, SCTP_SIGNATURE_SIZE) != 0) {
 		/* try the old cookie? */
@@ -1995,6 +2018,7 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 #endif
 		return (NULL);
 	}
+	DbgPrint("foo#9\n");
 
 	/*
 	 * check the cookie timestamps to be sure it's not stale
@@ -2003,6 +2027,8 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 	/* Expire time is in Ticks, so we convert to seconds */
 	time_expires.tv_sec = cookie->time_entered.tv_sec + cookie->cookie_life;
 	time_expires.tv_usec = cookie->time_entered.tv_usec;
+	DbgPrint("now(%d,%d), time_expires(%d,%d)\n",
+	    now.tv_sec, now.tv_usec, time_expires.tv_sec, time_expires.tv_usec);
 #ifndef __FreeBSD__
 	if (SCTP_CMP_TIMER(&now, &time_expires, >))
 #else
@@ -2013,7 +2039,8 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 		struct mbuf *op_err;
 		struct sctp_stale_cookie_msg *scm;
 		uint32_t tim;
-		SCTP_BUF_ALLOC(op_err, sizeof(struct sctp_stale_cookie_msg));
+		op_err = sctp_get_mbuf_for_msg(sizeof(struct sctp_stale_cookie_msg),
+					       0, M_DONTWAIT, 1, MT_DATA);
 		if (op_err == NULL) {
 			/* FOOBAR */
 			return (NULL);
@@ -2038,6 +2065,7 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 		sctp_send_operr_to(m, iphlen, op_err, cookie->peers_vtag);
 		return (NULL);
 	}
+	DbgPrint("foo#10\n");
 	/*
 	 * Now we must see with the lookup address if we have an existing
 	 * asoc. This will only happen if we were in the COOKIE-WAIT state
@@ -2105,6 +2133,7 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 			}
 		}
 	}
+	DbgPrint("foo#11\n");
 	cookie_len -= SCTP_SIGNATURE_SIZE;
 	if (*stcb == NULL) {
 		/* this is the "normal" case... get a new TCB */
@@ -3192,7 +3221,7 @@ sctp_handle_stream_reset(struct sctp_tcb *stcb, struct sctp_stream_reset_out_req
 	chk->no_fr_allowed = 0;
 	chk->book_size = chk->send_size = sizeof(struct sctp_chunkhdr);
 	chk->book_size_scale = 0;
-	SCTP_BUF_ALLOC(chk->data, MCLBYTES);
+	chk->data = sctp_get_mbuf_for_msg(MCLBYTES, 0, M_DONTWAIT, 1, MT_DATA);
 	if (chk->data == NULL) {
 	strres_nochunk:
 		if(chk->data) {
@@ -3779,7 +3808,8 @@ sctp_process_control(struct mbuf *m, int iphlen, int *offset, int length,
 				struct sctp_paramhdr *phdr;
 
 				oper = NULL;
-				SCTP_BUF_ALLOC(oper, sizeof(struct sctp_paramhdr));
+				oper = sctp_get_mbuf_for_msg(sizeof(struct sctp_paramhdr),
+							     0, M_DONTWAIT, 1, MT_DATA);
 				if (oper) {
 					/* pre-reserve some space */
 					SCTP_BUF_RESV_UF(oper, sizeof(struct sctp_chunkhdr));
@@ -4080,7 +4110,8 @@ sctp_process_control(struct mbuf *m, int iphlen, int *offset, int length,
 
 					if (sctp_abort_if_one_2_one_hits_limit) {
 						oper = NULL;
-						SCTP_BUF_ALLOC(oper, sizeof(struct sctp_paramhdr));
+						oper = sctp_get_mbuf_for_msg(sizeof(struct sctp_paramhdr),
+									     0, M_DONTWAIT, 1, MT_DATA);
 						if (oper) {
 							SCTP_BUF_SET_LEN(oper, sizeof(struct sctp_paramhdr));
 							phdr = mtod(oper,
@@ -4357,7 +4388,8 @@ sctp_process_control(struct mbuf *m, int iphlen, int *offset, int length,
 				struct mbuf *mm;
 				struct sctp_paramhdr *phd;
 
-				SCTP_BUF_ALLOC(mm, sizeof(struct sctp_paramhdr));
+				mm = sctp_get_mbuf_for_msg(sizeof(struct sctp_paramhdr),
+							   0, M_DONTWAIT, 1, MT_DATA);
 				if (mm) {
 					phd = mtod(mm, struct sctp_paramhdr *);
 					/*
@@ -5122,8 +5154,7 @@ sctp_skip_csum_4:
 #if defined(__NetBSD__) || defined(__OpenBSD__)
 	splx(s);
 #endif
-	if (m == NULL) {
-		SCTP_HEADER_TO_CHAIN(i_pak) = NULL;
+	if (m) {
 		SCTP_HEADER_FREE(i_pak);
 	}
 	if ((inp) && (refcount_up)) {

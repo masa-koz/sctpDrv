@@ -1405,7 +1405,6 @@ sctp_detach(struct socket *so)
 
 #endif
 
-#if 0
 int
 #if defined(__FreeBSD__) && __FreeBSD_version >= 500000
 sctp_sendm(struct socket *so, int flags, struct mbuf *m, struct sockaddr *addr,
@@ -6076,4 +6075,3 @@ SYSCTL_SETUP(sysctl_net_inet_sctp_setup, "sysctl net.inet.sctp subtree setup")
 }
 
 #endif				/* __NetBSD__ */
-#endif /* #if 0 */

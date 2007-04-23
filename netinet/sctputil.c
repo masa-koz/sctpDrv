@@ -233,7 +233,7 @@ sctp_log_mb(struct mbuf *m, int from)
 	sctp_clog[sctp_cwnd_log_at].event_type = (uint8_t) SCTP_LOG_EVENT_MBUF;
 	sctp_clog[sctp_cwnd_log_at].x.mb.mp = m;
 	sctp_clog[sctp_cwnd_log_at].x.mb.mbuf_flags = (uint8_t)(SCTP_BUF_GET_FLAGS(m));
-	sctp_clog[sctp_cwnd_log_at].x.mb.size = (uint16_t)(SCTP_BUF_LEN(m));
+	sctp_clog[sctp_cwnd_log_at].x.mb.size = (uint16_t)(SCTP_BUF_GET_LEN(m));
 	sctp_clog[sctp_cwnd_log_at].x.mb.data = SCTP_BUF_AT(m, 0);
 	if(SCTP_BUF_IS_EXTENDED(m)) {
 		sctp_clog[sctp_cwnd_log_at].x.mb.ext = SCTP_BUF_EXTEND_BASE(m);
@@ -858,12 +858,10 @@ sctp_fill_random_store(struct sctp_pcb *m)
 	 * numbers, but thats ok too since that is random as well :->
 	 */
 	m->store_at = 0;
-#if 0 /* XXX */
 	sctp_hmac(SCTP_HMAC, (uint8_t *)m->random_numbers,
 	    sizeof(m->random_numbers), (uint8_t *)&m->random_counter,
 	    sizeof(m->random_counter), (uint8_t *)m->random_store);
 	m->random_counter++;
-#endif
 }
 
 uint32_t
@@ -1406,10 +1404,7 @@ sctp_handle_addr_wq(void)
  */
 #endif
 void
-#if !defined(__Windows__)
 sctp_timeout_handler(void *t)
-#else
-sctp_timeout_handler(PKDPC MyDpcObject, void *t, void *Unused1, void *Unused2)
 {
 	struct sctp_inpcb *inp;
 	struct sctp_tcb *stcb;
@@ -1442,7 +1437,6 @@ sctp_timeout_handler(PKDPC MyDpcObject, void *t, void *Unused1, void *Unused2)
 	sctp_auditing(3, inp, stcb, net);
 #endif
 
-	DbgPrint("sctp_timeout_handler: tmr=>%p, inp=%p, stcb=>%p, net=>%p\n", tmr, inp, stcb, net);
 	/* sanity checks... */
 	if (tmr->self != (void *)tmr) {
 		/*
@@ -1601,8 +1595,10 @@ sctp_timeout_handler(PKDPC MyDpcObject, void *t, void *Unused1, void *Unused2)
 		if (stcb->asoc.num_send_timers_up < 0) {
 			stcb->asoc.num_send_timers_up = 0;
 		}
+		DbgPrint("SCTP_TIMER_TYPE_SEND\n");
 		if (sctp_t3rxt_timer(inp, stcb, net)) {
 			/* no need to unlock on tcb its gone */
+			DbgPrint("SCTP_TIMER_TYPE_SEND out\n");
 
 			goto out_decr;
 		}
@@ -2225,6 +2221,7 @@ sctp_timer_start(int t_type, struct sctp_inpcb *inp, struct sctp_tcb *stcb,
 	tmr->ticks = ticks;
 #endif
 	SCTP_OS_TIMER_START(&tmr->timer, to_ticks, sctp_timeout_handler, tmr);
+	DbgPrint("sctp_timer_start: tmr=%p,t_type=%d\n", tmr, t_type);
 	return (0);
 }
 
@@ -2401,6 +2398,7 @@ sctp_timer_stop(int t_type, struct sctp_inpcb *inp, struct sctp_tcb *stcb,
 	tmr->self = NULL;
 	tmr->stopped_from = from;
 	SCTP_OS_TIMER_STOP(&tmr->timer);
+	DbgPrint("sctp_timer_stop: tmr=%p,t_type=%d\n", tmr, t_type);
 	return (0);
 }
 
@@ -2819,7 +2817,7 @@ sctp_add_pad_tombuf(struct mbuf *m, int padlen)
 		/* Hard way we must grow the mbuf */
 		struct mbuf *tmp;
 
-		SCTP_BUF_ALLOC(tmp, padlen);
+		tmp = sctp_get_mbuf_for_msg(padlen, 0, M_DONTWAIT, 1, MT_DATA);
 		if (tmp == NULL) {
 			/* Out of space GAK! we are in big trouble. */
 			return (ENOSPC);
@@ -2903,7 +2901,7 @@ sctp_notify_assoc_change(uint16_t event, struct sctp_tcb *stcb,
 		return;
 	}
 
-	SCTP_BUF_ALLOC(m_notify, sizeof(struct sctp_assoc_change));
+	m_notify = sctp_get_mbuf_for_msg(sizeof(struct sctp_assoc_change), 0, M_DONTWAIT, 1, MT_DATA);
 	if (m_notify == NULL)
 		/* no space left */
 		return;
@@ -2954,7 +2952,7 @@ sctp_notify_peer_addr_change(struct sctp_tcb *stcb, uint32_t state,
 		/* event not enabled */
 		return;
 
-	 SCTP_BUF_ALLOC(m_notify, sizeof(struct sctp_paddr_change));
+	m_notify = sctp_get_mbuf_for_msg(sizeof(struct sctp_paddr_change), 0, M_DONTWAIT, 1, MT_DATA);
 	if (m_notify == NULL)
 		return;
 	SCTP_BUF_SET_LEN(m_notify, 0);
@@ -3028,7 +3026,7 @@ sctp_notify_send_failed(struct sctp_tcb *stcb, uint32_t error,
 		return;
 
 	length = sizeof(struct sctp_send_failed) + chk->send_size;
-	SCTP_BUF_ALLOC(m_notify, sizeof(struct sctp_send_failed));
+	m_notify = sctp_get_mbuf_for_msg(sizeof(struct sctp_send_failed), 0, M_DONTWAIT, 1, MT_DATA);
 	if (m_notify == NULL)
 		/* no space left */
 		return;
@@ -3093,7 +3091,7 @@ sctp_notify_send_failed2(struct sctp_tcb *stcb, uint32_t error,
 		return;
 
 	length = sizeof(struct sctp_send_failed) + sp->length;
-	SCTP_BUF_ALLOC(m_notify, sizeof(struct sctp_adaption_event));
+	m_notify = sctp_get_mbuf_for_msg(sizeof(struct sctp_adaption_event), 0, M_DONTWAIT, 1, MT_DATA);
 	if (m_notify == NULL)
 		/* no space left */
 		return;
@@ -3157,7 +3155,7 @@ sctp_notify_adaptation_layer(struct sctp_tcb *stcb,
 		/* event not enabled */
 		return;
 
-	SCTP_BUF_ALLOC(m_notify, sizeof(struct sctp_adaption_event));
+	m_notify = sctp_get_mbuf_for_msg(sizeof(struct sctp_adaption_event), 0, M_DONTWAIT, 1, MT_DATA);
 	if (m_notify == NULL)
 		/* no space left */
 		return;
@@ -3204,7 +3202,7 @@ sctp_notify_partial_delivery_indication(struct sctp_tcb *stcb,
 		/* event not enabled */
 		return;
 
-	SCTP_BUF_ALLOC(m_notify, sizeof(struct sctp_pdapi_event));
+	m_notify = sctp_get_mbuf_for_msg(sizeof(struct sctp_pdapi_event), 0, M_DONTWAIT, 1, MT_DATA);
 	if (m_notify == NULL)
 		/* no space left */
 		return;
@@ -3284,7 +3282,7 @@ sctp_notify_shutdown_event(struct sctp_tcb *stcb)
 		/* event not enabled */
 		return;
 
-	SCTP_BUF_ALLOC(m_notify, sizeof(struct sctp_shutdown_event));
+	m_notify = sctp_get_mbuf_for_msg(sizeof(struct sctp_shutdown_event), 0, M_DONTWAIT, 1, MT_DATA);
 	if (m_notify == NULL)
 		/* no space left */
 		return;
@@ -3328,7 +3326,7 @@ sctp_notify_stream_reset(struct sctp_tcb *stcb,
 		/* event not enabled */
 		return;
 
-	SCTP_BUF_ALLOC(m_notify, MCLBYTES);
+	m_notify = sctp_get_mbuf_for_msg(MCLBYTES, 0, M_DONTWAIT, 1, MT_DATA);
 	if (m_notify == NULL)
 		/* no space left */
 		return;
@@ -4335,7 +4333,7 @@ sctp_generate_invmanparam(uint16_t err)
 	/* Return a MBUF with a invalid mandatory parameter */
 	struct mbuf *m;
 
-	SCTP_BUF_ALLOC(m, sizeof(struct sctp_paramhdr));
+	m = sctp_get_mbuf_for_msg(sizeof(struct sctp_paramhdr), 0, M_DONTWAIT, 1, MT_DATA);
 	if (m) {
 		struct sctp_paramhdr *ph;
 
@@ -5232,6 +5230,7 @@ get_more_data:
 						       0,
 						       0);
 #endif
+					DbgPrint("SCTP_BUF_FREE: m=%p\n", m);
 					SCTP_BUF_FREE(control->data, m);
 					m = control->data;
 					/* been through it all, must hold sb lock ok to null tail */
@@ -5671,7 +5670,7 @@ get_more_data2:
 #if defined(__NetBSD__) || defined(__OpenBSD__)
 					splx(s);
 #endif
-					SCTP_BUF_REFCOPY(*mp, m, 0, cp_len,
+					*mp = m_copym(m, 0, cp_len,
 #if defined(__FreeBSD__) && __FreeBSD_version > 500000
 					    M_TRYWAIT
 #else
@@ -5921,7 +5920,7 @@ sctp_soreceive(so, paddr, uio, mp0, controlp, flagsp)
 			*controlp = NULL;
 	}
 	if (paddr) {
-		SCTP_BUF_ALLOC(maddr, fromlen);
+		maddr = sctp_get_mbuf_for_msg(fromlen, 0, M_DONTWAIT, 1, MT_SONAME);
 		if (maddr == 0) {
 			return (ENOMEM);
 		}
@@ -6037,7 +6036,6 @@ sctp_pool_put(struct pool *pp, void *ptr)
 	splx(s);
 }
 
-#endif
 #endif
 #if (defined(__FreeBSD__) && __FreeBSD_version < 603000) || defined(__Windows__)
 /*

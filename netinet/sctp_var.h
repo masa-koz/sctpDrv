@@ -429,7 +429,6 @@ extern uint32_t sctp_system_free_resc_limit;
 	} \
 } while (0)
 
-#if !defined(__Windows__)
 #define sctp_sbfree(ctl, stcb, sb, m) { \
 	if ((sb)->sb_cc >= (uint32_t)SCTP_BUF_LEN((m))) { \
 		atomic_subtract_int(&(sb)->sb_cc, SCTP_BUF_LEN((m))); \
@@ -480,10 +479,6 @@ extern uint32_t sctp_system_free_resc_limit;
 	if (SCTP_BUF_IS_EXTENDED(m)) \
 		atomic_add_int(&(sb)->sb_mbcnt, SCTP_BUF_EXTEND_SIZE(m)); \
 }
-#else
-#define sctp_sbfree(ctl, stcb, sb, m)
-#define sctp_sballoc(stcb, sb, m)
-#endif
 #endif
 
 #define sctp_ucount_incr(val) { \

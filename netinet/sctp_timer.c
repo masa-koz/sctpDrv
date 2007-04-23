@@ -276,7 +276,8 @@ sctp_threshold_management(struct sctp_inpcb *inp, struct sctp_tcb *stcb,
 		/* Abort notification sends a ULP notify */
 		struct mbuf *oper;
 
-		SCTP_BUF_ALLOC(oper, (sizeof(struct sctp_paramhdr) + sizeof(uint32_t)));
+		oper = sctp_get_mbuf_for_msg((sizeof(struct sctp_paramhdr) + sizeof(uint32_t)),
+						0, M_DONTWAIT, 1, MT_DATA);
 		if (oper) {
 			struct sctp_paramhdr *ph;
 			uint32_t *ippp;
@@ -1105,7 +1106,8 @@ sctp_cookie_timer(struct sctp_inpcb *inp,
 			/* FOOBAR! */
 			struct mbuf *oper;
 
-			SCTP_BUF_ALLOC(oper, (sizeof(struct sctp_paramhdr) + sizeof(uint32_t)));
+			oper = sctp_get_mbuf_for_msg((sizeof(struct sctp_paramhdr) + sizeof(uint32_t)),
+							0, M_DONTWAIT, 1, MT_DATA);
 			if (oper) {
 				struct sctp_paramhdr *ph;
 				uint32_t *ippp;

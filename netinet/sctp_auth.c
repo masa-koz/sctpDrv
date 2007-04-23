@@ -1683,7 +1683,7 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
 		 * report this in an Error Chunk: Unsupported HMAC
 		 * Identifier
 		 */
-		SCTP_BUF_ALLOC(m_err, sizeof(*err));
+		m_err = sctp_get_mbuf_for_msg(sizeof(*err), 0, M_DONTWAIT, 1, MT_HEADER);
 		if (m_err != NULL) {
 			/* pre-reserve some space */
 			SCTP_BUF_RESV_UF(m_err, sizeof(struct sctp_chunkhdr));
@@ -1784,7 +1784,8 @@ sctp_notify_authentication(struct sctp_tcb *stcb, uint32_t indication,
 		/* event not enabled */
 		return;
 
-	SCTP_BUF_ALLOC(m_notify, sizeof(struct sctp_authkey_event));
+	m_notify = sctp_get_mbuf_for_msg(sizeof(struct sctp_authkey_event),
+					 0, M_DONTWAIT, 1, MT_HEADER);
 	if (m_notify == NULL)
 		/* no space left */
 		return;

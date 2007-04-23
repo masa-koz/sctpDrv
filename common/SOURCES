@@ -6,8 +6,10 @@ TARGETLIBS= \
     $(BASEDIR)\lib\wxp\i386\tdi.lib \
     $(BASEDIR)\lib\wxp\i386\ndis.lib \
     ..\algrthms\i386\algrthms.lib \
+    ..\subr\i386\subr.lib \
     ..\netinet\i386\netinet.lib
-C_DEFINES=-DNTVERSION=$(NTVERSION) -D__Windows__ -D_KERNEL
+#C_DEFINES=-DNTVERSION=$(NTVERSION) -D__Windows__ -D_KERNEL -DLOCKDEBUG=0
+C_DEFINES=-DNTVERSION=$(NTVERSION) -D__Windows__ -D_KERNEL -DLOCKDEBUG=1
 MSC_WARNING_LEVEL=/W3 /WX
-INCLUDES=..\;..\inc;..\algrthms;$(BASEDIR)\inc;$(BASEDIR)\src\network\inc
-SOURCES= ntinit.c ntdisp.c
+INCLUDES=..\;..\inc;..\algrthms;..\subr;$(BASEDIR)\inc;$(BASEDIR)\src\network\inc
+SOURCES= ntinit.c ntdisp.c if.c route.c

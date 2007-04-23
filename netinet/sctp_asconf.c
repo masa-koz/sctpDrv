@@ -129,7 +129,8 @@ sctp_asconf_success_response(uint32_t id)
 	struct mbuf *m_reply = NULL;
 	struct sctp_asconf_paramhdr *aph;
 
-	SCTP_BUF_ALLOC(m_reply, sizeof(struct sctp_asconf_paramhdr));
+	m_reply = sctp_get_mbuf_for_msg(sizeof(struct sctp_asconf_paramhdr),
+					0, M_DONTWAIT, 1, MT_DATA);
 	if (m_reply == NULL) {
 #ifdef SCTP_DEBUG
 		if (sctp_debug_on & SCTP_DEBUG_ASCONF1) {
@@ -157,7 +158,10 @@ sctp_asconf_error_response(uint32_t id, uint16_t cause, uint8_t * error_tlv,
 	struct sctp_error_cause *error;
 	uint8_t *tlv;
 
-	SCTP_BUF_ALLOC(m_reply, (sizeof(struct sctp_asconf_paramhdr) + tlv_length + sizeof(struct sctp_error_cause)));
+	m_reply = sctp_get_mbuf_for_msg((sizeof(struct sctp_asconf_paramhdr) +
+					 tlv_length +
+					 sizeof(struct sctp_error_cause)),
+					0, M_DONTWAIT, 1, MT_DATA);
 	if (m_reply == NULL) {
 #ifdef SCTP_DEBUG
 		if (sctp_debug_on & SCTP_DEBUG_ASCONF1) {
@@ -706,7 +710,8 @@ sctp_handle_asconf(struct mbuf *m, unsigned int offset,
 		SCTP_BUF_FREE_ALL(asoc->last_asconf_ack_sent);
 		asoc->last_asconf_ack_sent = NULL;
 	}
-	SCTP_BUF_ALLOC(m_ack, sizeof(struct sctp_asconf_ack_chunk));
+	m_ack = sctp_get_mbuf_for_msg(sizeof(struct sctp_asconf_ack_chunk), 0,
+					M_DONTWAIT, 1, MT_DATA);
 	if (m_ack == NULL) {
 #ifdef SCTP_DEBUG
 		if (sctp_debug_on & SCTP_DEBUG_ASCONF1) {
@@ -2200,7 +2205,7 @@ sctp_compose_asconf(struct sctp_tcb *stcb, int *retlen)
 	 * it's simpler to fill in the asconf chunk header lookup address on
 	 * the fly
 	 */
-	SCTP_BUF_ALLOC(m_asconf_chk, sizeof(struct sctp_asconf_chunk));
+	m_asconf_chk = sctp_get_mbuf_for_msg(sizeof(struct sctp_asconf_chunk), 0, M_DONTWAIT, 1, MT_DATA);
 	if (m_asconf_chk == NULL) {
 		/* no mbuf's */
 #ifdef SCTP_DEBUG
@@ -2209,7 +2214,7 @@ sctp_compose_asconf(struct sctp_tcb *stcb, int *retlen)
 #endif				/* SCTP_DEBUG */
 		return (NULL);
 	}
-	SCTP_BUF_ALLOC(m_asconf, MCLBYTES);
+	m_asconf = sctp_get_mbuf_for_msg(MCLBYTES, 0, M_DONTWAIT, 1, MT_DATA);
 	if (m_asconf == NULL) {
 		/* no mbuf's */
 #ifdef SCTP_DEBUG

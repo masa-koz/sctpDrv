@@ -204,11 +204,7 @@ sctp_sosend(struct socket *so,
     struct sockaddr *addr,
 #endif
     struct uio *uio,
-#if defined(__Windows__)
-    struct mpkt *top,
-#else
     struct mbuf *top,
-#endif
     struct mbuf *control,
 #if defined(__NetBSD__) || defined(__APPLE__) || defined(__Windows__)
     int flags
