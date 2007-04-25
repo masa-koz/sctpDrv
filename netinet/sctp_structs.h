@@ -32,7 +32,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_structs.h,v 1.8 2007/02/12 23:24:31 rrs Exp $");
+__FBSDID("$FreeBSD: src/sys/netinet/sctp_structs.h,v 1.14 2007/04/22 11:06:27 rrs Exp $");
 #endif
 
 #ifndef __sctp_structs_h__
@@ -174,9 +174,6 @@ struct sctp_nets {
 	struct sctp_route {
 		struct rtentry *ro_rt;
 		union sctp_sockstore _l_addr;	/* remote peer addr */
-#if defined(__Windows__)
-		union sctp_sockstore _r_addr;
-#endif
 		struct sctp_ifa *_s_addr;	/* our selected src addr */
 	}ro;
 	/* mtu discovered so far */
@@ -194,7 +191,6 @@ struct sctp_nets {
 
 	/* last time in seconds I sent to it */
 	struct timeval last_sent_time;
-	KMUTEX mtx;
 	int ref_count;
 
 	/* Congestion stats per destination */
@@ -206,7 +202,6 @@ struct sctp_nets {
 	uint32_t cwnd;		/* actual cwnd */
 	uint32_t prev_cwnd;	/* cwnd before any processing */
 	uint32_t partial_bytes_acked;	/* in CA tracks when to incr a MTU */
-	uint32_t rtt_variance;
 	uint32_t prev_rtt;
 	/* tracking variables to avoid the aloc/free in sack processing */
 	unsigned int net_ack;
@@ -231,6 +226,12 @@ struct sctp_nets {
 	uint32_t heartbeat_random2;
 	uint32_t tos_flowlabel;
 
+	struct timeval start_time;      /* time when this net was created */
+
+	uint32_t marked_retrans;        /* number or DATA chunks marked for
+	                                   timer based retransmissions */
+	uint32_t marked_fastretrans;   
+
 	/* if this guy is ok or not ... status */
 	uint16_t dest_state;
 	/* number of transmit failures to down this guy */
@@ -241,9 +242,6 @@ struct sctp_nets {
 	uint8_t fast_retran_loss_recovery;
 	uint8_t will_exit_fast_recovery;
 	/* Flags that probably can be combined into dest_state */
-	uint8_t rto_variance_dir;	/* increase = 1, decreasing = 0 */
-	uint8_t rto_pending;	/* is segment marked for RTO update  ** if we
-				 * split? */
 	uint8_t fast_retran_ip;	/* fast retransmit in progress */
 	uint8_t hb_responded;
 	uint8_t saw_newack;	/* CMT's SFR algorithm flag */
@@ -273,13 +271,10 @@ struct sctp_nets {
 	uint8_t new_pseudo_cumack;	/* CMT CUC algorithm. Flag used to
 					 * indicate if a new pseudo-cumack or
 					 * rtx-pseudo-cumack has been received */
+	uint8_t window_probe;		/* Doing a window probe? */
 #ifdef SCTP_HIGH_SPEED
 	uint8_t last_hs_used;	/* index into the last HS table entry we used */
 #endif
-	struct timeval start_time;      /* time when this net was created */
-	uint32_t marked_retrans;        /* number or DATA chunks marked for
-	                                   timer based retransmissions */
-	uint32_t marked_fastretrans;   
 };
 
 
@@ -349,6 +344,7 @@ struct sctp_tmit_chunk {
 	uint8_t no_fr_allowed;
 	uint8_t pr_sctp_on;
 	uint8_t copy_by_ref;
+	uint8_t window_probe;
 };
 
 /*
@@ -381,7 +377,7 @@ struct sctp_queued_to_read {	/* sinfo structure Pluse more */
 	uint8_t  do_not_ref_stcb;
 	uint8_t  end_added;
 	uint8_t  pdapi_aborted;
-	uint8_t  resv;
+	uint8_t  some_taken;
 };
 
 /* This data structure will be on the outbound
@@ -420,6 +416,8 @@ struct sctp_stream_queue_pending {
 	uint8_t  some_taken;
 	uint8_t  addr_over;
 	uint8_t  pr_sctp_on;
+	uint8_t  sender_all_done;
+	uint8_t  put_last_out;
 };
 
 /*
@@ -429,9 +427,9 @@ struct sctp_stream_queue_pending {
 TAILQ_HEAD(sctpwheelunrel_listhead, sctp_stream_in);
 struct sctp_stream_in {
 	struct sctp_readhead inqueue;
-	TAILQ_ENTRY(sctp_stream_in) next_spoke;
 	uint16_t stream_no;
 	uint16_t last_sequence_delivered;	/* used for re-order */
+	uint8_t  delivery_started;
 };
 
 /* This struct is used to track the traffic on outbound streams */
@@ -468,6 +466,8 @@ struct sctp_tsn_log {
 	uint32_t tsn;
 	uint16_t strm;
 	uint16_t seq;
+	uint16_t sz;
+	uint16_t flgs;
 };
 
 /*
@@ -504,8 +504,6 @@ struct sctp_association {
 	/* Free chunk list */
 	struct sctpchunk_listhead free_chunks;
 
-	/* Free stream output control list */
-	struct sctp_streamhead free_strmoq;
 
 	/* Control chunk queue */
 	struct sctpchunk_listhead control_send_queue;
@@ -687,6 +685,8 @@ struct sctp_association {
         struct sctp_tsn_log  out_tsnlog[SCTP_TSN_LOG_SIZE];
 	uint16_t tsn_in_at;
  	uint16_t tsn_out_at;
+	uint16_t tsn_in_wrapped;
+	uint16_t tsn_out_wrapped;
 #endif /* SCTP_ASOCLOG_OF_TSNS */
 	/*
 	 * window state information and smallest MTU that I use to bound
@@ -811,7 +811,7 @@ struct sctp_association {
 	unsigned int max_init_times;
 	unsigned int max_send_times;
 
-	unsigned int def_net_failure;
+	uint16_t def_net_failure;
 
 	/*
 	 * lock flag: 0 is ok to send, 1+ (duals as a retran count) is
@@ -830,7 +830,6 @@ struct sctp_association {
 	uint16_t ecn_echo_cnt_onq;
 
 	uint16_t free_chunk_cnt;
-	uint16_t free_strmoq_cnt;
 
 	uint8_t  stream_locked;
 	uint8_t authenticated;	/* packet authenticated ok */

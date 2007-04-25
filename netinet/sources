@@ -19,4 +19,5 @@ SOURCES=	\
     sctp_crc32.c \
     sctp_sha1.c \
     sctp_auth.c \
-    sctp_asconf.c
+    sctp_asconf.c \
+    sctp_sysctl.c

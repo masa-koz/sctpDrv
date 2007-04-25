@@ -30,7 +30,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_auth.h,v 1.2 2007/02/12 23:24:31 rrs Exp $");
+__FBSDID("$FreeBSD: src/sys/netinet/sctp_auth.h,v 1.3 2007/03/15 11:27:13 rrs Exp $");
 #endif
 
 #ifndef __SCTP_AUTH_H__
@@ -100,17 +100,10 @@ typedef struct sctp_authinfo {
 } sctp_authinfo_t;
 
 
-/*
- * global variables
- */
-extern uint32_t sctp_asconf_auth_nochk;	/* sysctl to disable ASCONF auth chk */
-extern uint32_t sctp_auth_disable;	/* sysctl for temp feature interop */
-extern uint32_t sctp_auth_random_len;	/* sysctl */
 
 /*
  * Macros
  */
-
 #define sctp_auth_is_required_chunk(chunk, list) ((list == NULL) ? (0) : (list->chunks[chunk] != 0))
 
 /*

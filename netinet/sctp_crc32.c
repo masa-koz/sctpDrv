@@ -33,15 +33,11 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_crc32.c,v 1.6 2007/02/12 23:24:31 rrs Exp $");
+__FBSDID("$FreeBSD: src/sys/netinet/sctp_crc32.c,v 1.7 2007/04/14 09:44:09 rrs Exp $");
 #endif
 
 #include <netinet/sctp_os.h>
 #include <netinet/sctp_crc32.h>
-
-#if defined(__Windows__)
-#pragma data_seg("NONPAGE")
-#endif
 
 #ifndef SCTP_USE_ADLER32
 
@@ -585,17 +581,17 @@ sctp_crc32c_sb8_64_bit(uint32_t crc,
  *		none
  */
 uint32_t
-update_crc32(uint32_t crc32,
+update_crc32(uint32_t crc32c,
     unsigned char *buffer,
     unsigned int length)
 {
 	uint32_t offset;
 
 	if (length == 0) {
-		return (crc32);
+		return (crc32c);
 	}
 	offset = ((uintptr_t) buffer) & 0x3;
-	return (sctp_crc32c_sb8_64_bit(crc32, buffer, length, offset));
+	return (sctp_crc32c_sb8_64_bit(crc32c, buffer, length, offset));
 }
 
 uint32_t sctp_crc_c[256] = {
@@ -669,21 +665,21 @@ uint32_t sctp_crc_c[256] = {
 #define SCTP_CRC32C(c,d) (c=(c>>8)^sctp_crc_c[(c^(d))&0xFF])
 
 uint32_t
-old_update_crc32(uint32_t crc32,
+old_update_crc32(uint32_t crc32c,
 		 unsigned char *buffer,
 		 unsigned int length)
 {
 	unsigned int i;
 
 	for (i = 0; i < length; i++) {
-		SCTP_CRC32C(crc32, buffer[i]);
+		SCTP_CRC32C(crc32c, buffer[i]);
 	}
-	return (crc32);
+	return (crc32c);
 }
 
 
 uint32_t
-sctp_csum_finalize(uint32_t crc32)
+sctp_csum_finalize(uint32_t crc32c)
 {
 	uint32_t result;
 
@@ -692,7 +688,7 @@ sctp_csum_finalize(uint32_t crc32)
 
 #endif
 	/* Complement the result */
-	result = ~crc32;
+	result = ~crc32c;
 #if BYTE_ORDER == BIG_ENDIAN
 	/*
 	 * For BIG-ENDIAN.. aka Motorola byte order the result is in
@@ -703,16 +699,16 @@ sctp_csum_finalize(uint32_t crc32)
 	byte1 = (result >> 8) & 0x000000ff;
 	byte2 = (result >> 16) & 0x000000ff;
 	byte3 = (result >> 24) & 0x000000ff;
-	crc32 = ((byte0 << 24) | (byte1 << 16) | (byte2 << 8) | byte3);
+	crc32c = ((byte0 << 24) | (byte1 << 16) | (byte2 << 8) | byte3);
 #else
 	/*
 	 * For INTEL platforms the result comes out in network order. No
 	 * htonl is required or the swap above. So we optimize out both the
 	 * htonl and the manual swap above.
 	 */
-	crc32 = result;
+	crc32c = result;
 #endif
-	return (crc32);
+	return (crc32c);
 }
 
 #endif

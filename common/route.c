@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: route.c,v 1.1 2007/04/23 15:50:03 kozuka Exp $
+ * $Id: route.c,v 1.2 2007/04/25 11:44:56 kozuka Exp $
  */
 
 #include "globals.h"
@@ -119,7 +119,6 @@ route_init(void)
 	route_ipv6_init();
 }
 
-
 void
 route_ipv4_init(void)
 {
@@ -159,7 +158,7 @@ route_ipv4_init(void)
 	    &ipSnmpInfo,
 	    sizeof(ipSnmpInfo));
 	if (status != STATUS_SUCCESS) {
-		DbgPrint("ZwDeviceIoControlFile failed, error=%08x\n", status);
+		DbgPrint("route_ipv4_init: ZwDeviceIoControlFile=%08x\n", status);
 		return;
 	}
 
@@ -258,6 +257,14 @@ route_ipv4_init(void)
 		rt->rt_gateway.sin.sin_len = sizeof(struct sockaddr_in);
 		RtlCopyMemory(&rt->rt_gateway.sin.sin_addr, &ipRoute[i].ire_gw, sizeof(struct in_addr));
 
+		switch (ipRoute[i].ire_type) {
+		case 4:
+			rt->rt_flags |= RT_FLAG_GATEWAY;
+			break;
+		case 3:
+			rt->rt_flags |= RT_FLAG_HOST;
+			break;
+		}
 		rt->rt_flags |= RT_FLAG_UP;
 
 		IFNET_WLOCK();

@@ -13,6 +13,7 @@ struct ifnet {
 	int			if_index;
 	struct ifaddrhead	if_addrhead;
 	uint16_t		if_flags;
+	int			if_mtu;
 };
 #define	IF_FLAG_LOOPBACK	0x0001
 

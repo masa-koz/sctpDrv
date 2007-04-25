@@ -33,7 +33,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctputil.h,v 1.8 2007/02/12 23:24:31 rrs Exp $");
+__FBSDID("$FreeBSD: src/sys/netinet/sctputil.h,v 1.14 2007/04/22 11:06:27 rrs Exp $");
 #endif
 #ifndef __sctputil_h__
 #define __sctputil_h__
@@ -41,8 +41,58 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctputil.h,v 1.8 2007/02/12 23:24:31 rrs Exp
 
 #if defined(_KERNEL)
 
-#ifdef SCTP_MBUF_LOGGING
 
+/*-
+ * Any new logging added must also define SCTP_STAT_LOGGING if
+ * its not already defined.
+ */
+#if defined(SCTP_LOG_MAXBURST) || defined(SCTP_LOG_RWND) || defined(SCTP_LOG_RWND)
+#ifndef SCTP_STAT_LOGGING
+#define SCTP_STAT_LOGGING 1
+#endif
+#endif
+
+#if defined(SCTP_CWND_LOGGING) || defined(SCTP_CWND_MONITOR) || defined(SCTP_BLK_LOGGING)
+#ifndef SCTP_STAT_LOGGING
+#define SCTP_STAT_LOGGING 1
+#endif
+#endif
+
+#if defined(SCTP_STR_LOGGING) || defined(SCTP_FR_LOGGING) || defined(SCTP_MAP_LOGGING)
+#ifndef SCTP_STAT_LOGGING
+#define SCTP_STAT_LOGGING 1
+#endif
+#endif
+
+#if defined(SCTP_SACK_LOGGING) || defined(SCTP_LOCK_LOGGING) || defined(SCTP_STAT_LOGGING)
+#ifndef SCTP_STAT_LOGGING
+#define SCTP_STAT_LOGGING 1
+#endif
+#endif
+
+#if defined(SCTP_RTTVAR_LOGGING) || defined(SCTP_SB_LOGGING) || defined(SCTP_EARLYFR_LOGGING)
+#ifndef SCTP_STAT_LOGGING
+#define SCTP_STAT_LOGGING 1
+#endif
+#endif
+
+#if defined(SCTP_NAGLE_LOGGING) || defined(SCTP_WAKE_LOGGING) || defined(SCTP_RECV_RWND_LOGGING)
+#ifndef SCTP_STAT_LOGGING
+#define SCTP_STAT_LOGGING 1
+#endif
+#endif
+
+#if defined(SCTP_SACK_RWND_LOGGING) || defined(SCTP_FLIGHT_LOGGING) || defined(SCTP_MBUF_LOGGING)
+#ifndef SCTP_STAT_LOGGING
+#define SCTP_STAT_LOGGING 1
+#endif
+#endif
+
+#ifdef SCTP_ASOCLOG_OF_TSNS
+void sctp_print_out_track_log(struct sctp_tcb *stcb);
+#endif
+
+#ifdef SCTP_MBUF_LOGGING
 struct mbuf *sctp_m_free(struct mbuf *m);
 void sctp_m_freem(struct mbuf *m);
 #else
@@ -57,6 +107,9 @@ void sctp_m_freem(struct mbuf *m);
 /*
  * Function prototypes
  */
+uint32_t
+sctp_get_ifa_hash_val(struct sockaddr *addr);
+
 struct sctp_ifa *
 sctp_find_ifa_in_ep(struct sctp_inpcb *inp, struct sockaddr *addr, int hold_lock);
 struct sctp_ifa *
@@ -74,13 +127,15 @@ int sctp_init_asoc(struct sctp_inpcb *, struct sctp_association *, int, uint32_t
 
 void sctp_fill_random_store(struct sctp_pcb *);
 
+#define sctp_timer_start(a, b, c, d) _sctp_timer_start(a, b, c, d, __FILE__, __LINE__)
 int
-sctp_timer_start(int, struct sctp_inpcb *, struct sctp_tcb *,
-    struct sctp_nets *);
+_sctp_timer_start(int, struct sctp_inpcb *, struct sctp_tcb *,
+    struct sctp_nets *, char *, int);
 
+#define sctp_timer_stop(a, b, c, d, f) _sctp_timer_stop(a, b, c, d, f, __FILE__, __LINE__)
 int
-sctp_timer_stop(int, struct sctp_inpcb *, struct sctp_tcb *,
-    struct sctp_nets *, uint32_t);
+_sctp_timer_stop(int, struct sctp_inpcb *, struct sctp_tcb *,
+    struct sctp_nets *, uint32_t, char *, int);
 
 int
 sctp_dynamic_set_primary(struct sockaddr *sa, uint32_t vrf_id);
@@ -130,7 +185,7 @@ int sctp_add_pad_tombuf(struct mbuf *, int);
 
 int sctp_pad_lastmbuf(struct mbuf *, int, struct mbuf *);
 
-void sctp_ulp_notify(uint32_t, struct sctp_tcb *, uint16_t, void *);
+void sctp_ulp_notify(uint16_t, struct sctp_tcb *, uint16_t, void *);
 
 void
 sctp_pull_off_control_to_new_inp(struct sctp_inpcb *old_inp,
@@ -149,7 +204,7 @@ void sctp_abort_notification(struct sctp_tcb *, uint16_t);
 /* We abort responding to an IP packet for some reason */
 void
 sctp_abort_association(struct sctp_inpcb *, struct sctp_tcb *,
-    struct mbuf *, int, struct sctphdr *, struct mbuf *);
+    struct mbuf *, unsigned int, struct sctphdr *, struct mbuf *);
 
 /* We choose to abort via user input */
 void
@@ -209,7 +264,7 @@ void sctp_print_address_pkt(struct ip *, struct sctphdr *);
 
 void
 sctp_notify_partial_delivery_indication(struct sctp_tcb *stcb,
-					uint32_t error, int no_lock);
+					uint32_t error, int no_lock, uint32_t strseq);
 
 int
 sctp_release_pr_sctp_chunk(struct sctp_tcb *, struct sctp_tmit_chunk *,
@@ -227,11 +282,9 @@ sctp_free_bufspace(struct sctp_tcb *, struct sctp_association *,
 #define sctp_free_bufspace(stcb, asoc, tp1, chk_cnt)  \
 do { \
 	if (tp1->data != NULL) { \
-		DbgPrint("sctp_free_bufspace: chunks_on_out_queue=%d,chk_cnt=%d\n", (asoc)->chunks_on_out_queue, chk_cnt); \
-                atomic_add_int(&((asoc)->chunks_on_out_queue), -(chk_cnt)); \
-		DbgPrint("sctp_free_bufspace: chunks_on_out_queue=%d\n", (asoc)->chunks_on_out_queue); \
+                atomic_add_int(&((asoc)->chunks_on_out_queue), -chk_cnt); \
 		if ((asoc)->total_output_queue_size >= tp1->book_size) { \
-			atomic_add_int(&((asoc)->total_output_queue_size), -(tp1)->book_size); \
+			atomic_add_int(&((asoc)->total_output_queue_size), -tp1->book_size); \
 		} else { \
 			(asoc)->total_output_queue_size = 0; \
 		} \
@@ -270,13 +323,14 @@ do { \
 
 #define sctp_snd_sb_alloc(stcb, sz)  \
 do { \
-	atomic_add_int(&stcb->asoc.total_output_queue_size, sz); \
+	atomic_add_int(&stcb->asoc.total_output_queue_size,sz); \
 	if ((stcb->sctp_socket != NULL) && \
 	    ((stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_TCPTYPE) || \
 	     (stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_IN_TCPPOOL))) { \
 		atomic_add_int(&stcb->sctp_socket->so_snd.sb_cc,sz); \
 	} \
 } while (0)
+
 
 #if defined(__NetBSD__)
 int

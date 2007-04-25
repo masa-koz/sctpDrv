@@ -30,7 +30,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_auth.c,v 1.4 2007/02/12 23:24:30 rrs Exp $");
+__FBSDID("$FreeBSD: src/sys/netinet/sctp_auth.c,v 1.6 2007/03/31 11:47:29 rrs Exp $");
 #endif
 
 #include <netinet/sctp_os.h>
@@ -38,20 +38,22 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_auth.c,v 1.4 2007/02/12 23:24:30 rrs Ex
 #include <netinet/sctp_header.h>
 #include <netinet/sctp_pcb.h>
 #include <netinet/sctp_var.h>
+#include <netinet/sctp_sysctl.h>
 #include <netinet/sctputil.h>
 #include <netinet/sctp_indata.h>
 #include <netinet/sctp_output.h>
 #include <netinet/sctp_auth.h>
 
 #ifdef SCTP_DEBUG
-extern uint32_t sctp_debug_on;
-
 #define SCTP_AUTH_DEBUG		(sctp_debug_on & SCTP_DEBUG_AUTH1)
 #define SCTP_AUTH_DEBUG2	(sctp_debug_on & SCTP_DEBUG_AUTH2)
 #endif				/* SCTP_DEBUG */
 
-
+#if defined(__Windows__)
 void
+#else
+inline void
+#endif
 sctp_clear_chunklist(sctp_auth_chklist_t *chklist)
 {
 	bzero(chklist, sizeof(*chklist));
@@ -157,7 +159,11 @@ sctp_auth_delete_chunk(uint8_t chunk, sctp_auth_chklist_t *list)
 	return (0);
 }
 
+#if defined(__Windows__)
 size_t
+#else
+inline size_t
+#endif
 sctp_auth_get_chklist_size(const sctp_auth_chklist_t *list)
 {
 	if (list == NULL)
@@ -325,7 +331,11 @@ sctp_show_key(sctp_key_t *key, const char *str)
 	}
 }
 
-static __inline uint32_t
+#if defined(__Windows__)
+static uint32_t
+#else
+static inline uint32_t
+#endif
 sctp_get_keylen(sctp_key_t *key)
 {
 	if (key != NULL)
@@ -812,7 +822,11 @@ sctp_free_authinfo(sctp_authinfo_t *authinfo)
 }
 
 
+#if defined(__Windows__)
 uint32_t
+#else
+inline uint32_t
+#endif
 sctp_get_auth_chunk_len(uint16_t hmac_algo)
 {
 	int size;
@@ -847,7 +861,11 @@ sctp_get_hmac_digest_len(uint16_t hmac_algo)
 	}			/* end switch */
 }
 
-static __inline int
+#if defined(__Windows__)
+static int
+#else
+static inline int
+#endif
 sctp_get_hmac_block_len(uint16_t hmac_algo)
 {
 	switch (hmac_algo) {
@@ -1089,18 +1107,18 @@ sctp_hmac_m(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
 	sctp_hmac_update(hmac_algo, &ctx, ipad, blocklen);
 	/* find the correct starting mbuf and offset (get start of text) */
 	m_tmp = m;
-	while ((m_tmp != NULL) && (m_offset >= (uint32_t) SCTP_BUF_GET_LEN(m_tmp))) {
-		m_offset -= SCTP_BUF_GET_LEN(m_tmp);
-		m_tmp = SCTP_BUF_GET_NEXT(m_tmp);
+	while ((m_tmp != NULL) && (m_offset >= (uint32_t) SCTP_BUF_LEN(m_tmp))) {
+		m_offset -= SCTP_BUF_LEN(m_tmp);
+		m_tmp = SCTP_BUF_NEXT(m_tmp);
 	}
 	/* now use the rest of the mbuf chain for the text */
 	while (m_tmp != NULL) {
 		sctp_hmac_update(hmac_algo, &ctx, mtod(m_tmp, uint8_t *) + m_offset,
-		    SCTP_BUF_GET_LEN(m_tmp) - m_offset);
+		    SCTP_BUF_LEN(m_tmp) - m_offset);
 
 		/* clear the offset since it's only for the first mbuf */
 		m_offset = 0;
-		m_tmp = SCTP_BUF_GET_NEXT(m_tmp);
+		m_tmp = SCTP_BUF_NEXT(m_tmp);
 	}
 	sctp_hmac_final(hmac_algo, &ctx, temp);
 
@@ -1416,7 +1434,7 @@ sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
 	struct sctp_paramhdr *phdr, tmp_param;
 	uint16_t plen, ptype;
 	uint8_t random_store[SCTP_PARAM_BUFFER_SIZE];
-	struct sctp_auth_random *random = NULL;
+	struct sctp_auth_random *p_random = NULL;
 	uint16_t random_len = 0;
 	uint8_t hmacs_store[SCTP_PARAM_BUFFER_SIZE];
 	struct sctp_auth_hmac_algo *hmacs = NULL;
@@ -1447,8 +1465,8 @@ sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
 			if (phdr == NULL)
 				return;
 			/* save the random and length for the key */
-			random = (struct sctp_auth_random *)phdr;
-			random_len = plen - sizeof(*random);
+			p_random = (struct sctp_auth_random *)phdr;
+			random_len = plen - sizeof(*p_random);
 		} else if (ptype == SCTP_HMAC_LIST) {
 			int num_hmacs;
 			int i;
@@ -1506,18 +1524,18 @@ sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
 	new_key = sctp_alloc_key(keylen);
 	if (new_key != NULL) {
 	    /* copy in the RANDOM */
-	    if (random != NULL)
-		bcopy(random->random_data, new_key->key, random_len);
+	    if (p_random != NULL)
+		bcopy(p_random->random_data, new_key->key, random_len);
 	}
 #else
-	keylen = sizeof(*random) + random_len + sizeof(*chunks) + num_chunks +
+	keylen = sizeof(*p_random) + random_len + sizeof(*chunks) + num_chunks +
 	    sizeof(*hmacs) + hmacs_len;
 	new_key = sctp_alloc_key(keylen);
 	if (new_key != NULL) {
 	    /* copy in the RANDOM */
-	    if (random != NULL) {
-		keylen = sizeof(*random) + random_len;
-		bcopy(random, new_key->key, keylen);
+	    if (p_random != NULL) {
+		keylen = sizeof(*p_random) + random_len;
+		bcopy(p_random, new_key->key, keylen);
 	    }
 	    /* append in the AUTH chunks */
 	    if (chunks != NULL) {
@@ -1616,23 +1634,23 @@ sctp_bzero_m(struct mbuf *m, uint32_t m_offset, uint32_t size)
 
 	/* find the correct starting mbuf and offset (get start position) */
 	m_tmp = m;
-	while ((m_tmp != NULL) && (m_offset >= (uint32_t) SCTP_BUF_GET_LEN(m_tmp))) {
-		m_offset -= SCTP_BUF_GET_LEN(m_tmp);
-		m_tmp = SCTP_BUF_GET_NEXT(m_tmp);
+	while ((m_tmp != NULL) && (m_offset >= (uint32_t) SCTP_BUF_LEN(m_tmp))) {
+		m_offset -= SCTP_BUF_LEN(m_tmp);
+		m_tmp = SCTP_BUF_NEXT(m_tmp);
 	}
 	/* now use the rest of the mbuf chain */
 	while ((m_tmp != NULL) && (size > 0)) {
 		data = mtod(m_tmp, uint8_t *) + m_offset;
-		if (size > (uint32_t) SCTP_BUF_GET_LEN(m_tmp)) {
-			bzero(data, SCTP_BUF_GET_LEN(m_tmp));
-			size -= SCTP_BUF_GET_LEN(m_tmp);
+		if (size > (uint32_t) SCTP_BUF_LEN(m_tmp)) {
+			bzero(data, SCTP_BUF_LEN(m_tmp));
+			size -= SCTP_BUF_LEN(m_tmp);
 		} else {
 			bzero(data, size);
 			size = 0;
 		}
 		/* clear the offset since it's only for the first mbuf */
 		m_offset = 0;
-		m_tmp = SCTP_BUF_GET_NEXT(m_tmp);
+		m_tmp = SCTP_BUF_NEXT(m_tmp);
 	}
 }
 
@@ -1693,7 +1711,7 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
 			err->ph.param_type = htons(SCTP_CAUSE_UNSUPPORTED_HMACID);
 			err->ph.param_length = htons(sizeof(*err));
 			err->hmac_id = ntohs(hmac_id);
-			SCTP_BUF_SET_LEN(m_err, sizeof(*err));
+			SCTP_BUF_LEN(m_err) = sizeof(*err);
 			/* queue it */
 			sctp_queue_op_err(stcb, m_err);
 		}
@@ -1784,13 +1802,13 @@ sctp_notify_authentication(struct sctp_tcb *stcb, uint32_t indication,
 		/* event not enabled */
 		return;
 
-	m_notify = sctp_get_mbuf_for_msg(sizeof(struct sctp_authkey_event),
-					 0, M_DONTWAIT, 1, MT_HEADER);
+	m_notify = sctp_get_mbuf_for_msg(sizeof(struct sctp_authkey_event), 
+					  0, M_DONTWAIT, 1, MT_HEADER);
 	if (m_notify == NULL)
 		/* no space left */
 		return;
 
-	SCTP_BUF_SET_LEN(m_notify, 0);
+	SCTP_BUF_LEN(m_notify) = 0;
 	auth = mtod(m_notify, struct sctp_authkey_event *);
 	auth->auth_type = SCTP_AUTHENTICATION_EVENT;
 	auth->auth_flags = 0;
@@ -1800,19 +1818,19 @@ sctp_notify_authentication(struct sctp_tcb *stcb, uint32_t indication,
 	auth->auth_indication = indication;
 	auth->auth_assoc_id = sctp_get_associd(stcb);
 
-	SCTP_BUF_SET_LEN(m_notify, sizeof(*auth));
-	SCTP_BUF_SET_NEXT(m_notify, NULL);
+	SCTP_BUF_LEN(m_notify) = sizeof(*auth);
+	SCTP_BUF_NEXT(m_notify) = NULL;
 
 	/* append to socket */
 	control = sctp_build_readq_entry(stcb, stcb->asoc.primary_destination,
 	    0, 0, 0, 0, 0, 0, m_notify);
 	if (control == NULL) {
 		/* no memory */
-		SCTP_BUF_FREE_ALL(m_notify);
+		sctp_m_freem(m_notify);
 		return;
 	}
 	control->spec_flags = M_NOTIFICATION;
-	control->length = SCTP_BUF_GET_LEN(m_notify);
+	control->length = SCTP_BUF_LEN(m_notify);
 	/* not that we need this */
 	control->tail_mbuf = m_notify;
 	sctp_add_to_readq(stcb->sctp_ep, stcb, control,
@@ -1822,7 +1840,7 @@ sctp_notify_authentication(struct sctp_tcb *stcb, uint32_t indication,
 
 /*
  * validates the AUTHentication related parameters in an INIT/INIT-ACK
- * Note: currently only used for INIT as INIT-ACK is handled __inline
+ * Note: currently only used for INIT as INIT-ACK is handled inline
  * with sctp_load_addresses_from_init()
  */
 int
@@ -1832,7 +1850,7 @@ sctp_validate_init_auth_params(struct mbuf *m, int offset, int limit)
 	uint16_t ptype, plen;
 	int peer_supports_asconf = 0;
 	int peer_supports_auth = 0;
-	int got_random = 0, got_hmacs = 0;
+	int got_random = 0, got_hmacs = 0, got_chklist = 0;
 
 	/* go through each of the params. */
 	phdr = sctp_get_next_param(m, offset, &parm_buf, sizeof(parm_buf));
@@ -1907,6 +1925,10 @@ sctp_validate_init_auth_params(struct mbuf *m, int offset, int limit)
 				return (-1);
 			}
 			got_hmacs = 1;
+		} else if (ptype == SCTP_CHUNK_LIST) {
+			/* did the peer send a non-empty chunk list? */
+			if (plen > 0)
+				got_chklist = 1;
 		}
 
 		offset += SCTP_SIZE32(plen);
@@ -1921,6 +1943,13 @@ sctp_validate_init_auth_params(struct mbuf *m, int offset, int limit)
 		peer_supports_auth = 1;
 	} else {
 		peer_supports_auth = 0;
+	}
+	if (!peer_supports_auth && got_chklist) {
+#ifdef SCTP_DEBUG
+		if (sctp_debug_on & SCTP_DEBUG_AUTH1)
+			printf("SCTP: peer sent chunk list w/o AUTH\n");
+#endif
+		return (-1);
 	}
 	if (!sctp_asconf_auth_nochk && peer_supports_asconf &&
 	    !peer_supports_auth) {
@@ -1938,7 +1967,7 @@ sctp_initialize_auth_params(struct sctp_inpcb *inp, struct sctp_tcb *stcb)
 {
 	uint16_t chunks_len = 0;
 	uint16_t hmacs_len = 0;
-	uint16_t random_len = sctp_auth_random_len;
+	uint16_t random_len = SCTP_AUTH_RANDOM_SIZE_DEFAULT;
 	sctp_key_t *new_key;
 	uint16_t keylen;
 

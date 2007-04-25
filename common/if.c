@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: if.c,v 1.1 2007/04/23 15:49:41 kozuka Exp $
+ * $Id: if.c,v 1.2 2007/04/25 11:44:56 kozuka Exp $
  */
 
 #include "globals.h"
@@ -112,6 +112,8 @@ ClientPnPAddNetAddress(
 			return;
 		}
 		RtlZeroMemory(ifp, sizeof(*ifp));
+
+		ifp->if_mtu = 1500; /* XXX */
 
 		TAILQ_INIT(&ifp->if_addrhead);
 		IF_LOCK_INIT(ifp);

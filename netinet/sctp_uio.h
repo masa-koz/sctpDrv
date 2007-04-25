@@ -31,7 +31,7 @@
 /* $KAME: sctp_uio.h,v 1.11 2005/03/06 16:04:18 itojun Exp $	 */
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_uio.h,v 1.7 2007/02/12 23:24:31 rrs Exp $");
+__FBSDID("$FreeBSD: src/sys/netinet/sctp_uio.h,v 1.14 2007/04/22 11:06:27 rrs Exp $");
 #endif
 
 #ifndef __sctp_uio_h__
@@ -47,11 +47,10 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_uio.h,v 1.7 2007/02/12 23:24:31 rrs Exp
 #include <stdint.h>
 #endif
 #include <sys/types.h>
-#if 0
+#if !defined(__Windows__)
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <netinet/in.h>
-#else
 #endif
 
 typedef uint32_t sctp_assoc_t;
@@ -115,20 +114,12 @@ struct sctp_sndrcvinfo {
 };
 
 struct sctp_extrcvinfo {
-	uint16_t sinfo_stream;
-	uint16_t sinfo_ssn;
-	uint16_t sinfo_flags;
-	uint32_t sinfo_ppid;
-	uint32_t sinfo_context;
-	uint32_t sinfo_timetolive;
-	uint32_t sinfo_tsn;
-	uint32_t sinfo_cumtsn;
-	sctp_assoc_t sinfo_assoc_id; 
-	uint16_t next_flags;
-	uint16_t next_stream; 
-	uint32_t next_asocid;
-	uint32_t next_length;
-	uint32_t next_ppid;
+	struct sctp_sndrcvinfo sreinfo_sinfo;
+	uint16_t sreinfo_next_flags;
+	uint16_t sreinfo_next_stream; 
+	uint32_t sreinfo_next_aid;
+	uint32_t sreinfo_next_length;
+	uint32_t sreinfo_next_ppid;
 	uint8_t  __reserve_pad[SCTP_ALIGN_RESV_PAD_SHORT];
 };
 
@@ -328,6 +319,8 @@ struct sctp_pdapi_event {
 	uint16_t pdapi_flags;
 	uint32_t pdapi_length;
 	uint32_t pdapi_indication;
+	uint16_t pdapi_stream;
+	uint16_t pdapi_seq;
 	sctp_assoc_t pdapi_assoc_id;
 };
 
@@ -668,8 +661,6 @@ struct sctp_lock_log {
 struct sctp_rto_log {
 	void * net;
 	uint32_t rtt;
-	uint32_t rttvar;
-	uint8_t direction;
 };
 
 struct sctp_nagle_log {
@@ -774,7 +765,7 @@ struct	sctpstat {
 	/* input statistics: */
 	u_long	sctps_recvpackets;	   /* total input packets        */
 	u_long  sctps_recvdatagrams;       /* total input datagrams      */
-	u_long  sctps_recvpktwithdata;
+	u_long  sctps_recvpktwithdata;     /* total packets that had data */
 	u_long  sctps_recvsacks;           /* total input SACK chunks    */
 	u_long  sctps_recvdata;            /* total input DATA chunks    */
 	u_long  sctps_recvdupdata;         /* total input duplicate DATA chunks */
@@ -794,45 +785,47 @@ struct	sctpstat {
 	u_long  sctps_senddata;            /* total output DATA chunks   */
 	u_long  sctps_sendretransdata;     /* total output retransmitted DATA chunks */
 	u_long  sctps_sendfastretrans;     /* total output fast retransmitted DATA chunks */
-	u_long  sctps_sendmultfastretrans; /* U-del */
+	u_long  sctps_sendmultfastretrans; /* total FR's that happened more than once
+                                            * to same chunk (u-del multi-fr algo).
+					    */
 	u_long  sctps_sendheartbeat;       /* total output HB chunks     */
 	u_long  sctps_sendecne;            /* total output ECNE chunks    */
 	u_long  sctps_sendauth;            /* total output AUTH chunks FIXME   */
 	u_long  sctps_senderrors;	   /* ip_output error counter */
 	/* PCKDROPREP statistics: */
-	u_long  sctps_pdrpfmbox;           /* */
-	u_long  sctps_pdrpfehos;           /* */
-	u_long  sctps_pdrpmbda;            /* */
-	u_long  sctps_pdrpmbct;            /* */
-	u_long  sctps_pdrpbwrpt;           /* */
-	u_long  sctps_pdrpcrupt;           /* */
-	u_long  sctps_pdrpnedat;           /* */
-	u_long  sctps_pdrppdbrk;           /* */
-	u_long  sctps_pdrptsnnf;           /* */
-	u_long  sctps_pdrpdnfnd;           /* */
-	u_long  sctps_pdrpdiwnp;           /* */
-	u_long  sctps_pdrpdizrw;           /* */
-	u_long  sctps_pdrpbadd;            /* */
-	u_long  sctps_pdrpmark;            /* */
+	u_long  sctps_pdrpfmbox;           /* Packet drop from middle box */
+	u_long  sctps_pdrpfehos;           /* P-drop from end host */
+	u_long  sctps_pdrpmbda;            /* P-drops with data */
+	u_long  sctps_pdrpmbct;            /* P-drops, non-data, non-endhost */
+	u_long  sctps_pdrpbwrpt;           /* P-drop, non-endhost, bandwidth rep only */
+	u_long  sctps_pdrpcrupt;           /* P-drop, not enough for chunk header */
+	u_long  sctps_pdrpnedat;           /* P-drop, not enough data to confirm */
+	u_long  sctps_pdrppdbrk;           /* P-drop, where process_chunk_drop said break */
+	u_long  sctps_pdrptsnnf;           /* P-drop, could not find TSN */
+	u_long  sctps_pdrpdnfnd;           /* P-drop, attempt reverse TSN lookup */
+	u_long  sctps_pdrpdiwnp;           /* P-drop, e-host confirms zero-rwnd */
+	u_long  sctps_pdrpdizrw;           /* P-drop, midbox confirms no space */
+	u_long  sctps_pdrpbadd;            /* P-drop, data did not match TSN */
+	u_long  sctps_pdrpmark;            /* P-drop, TSN's marked for Fast Retran */
 	/* timeouts */
-	u_long  sctps_timoiterator;        /* */
-	u_long  sctps_timodata;            /* */
-	u_long  sctps_timowindowprobe;     /* */
-	u_long  sctps_timoinit;            /* */
-	u_long  sctps_timosack;            /* */
-	u_long  sctps_timoshutdown;        /* */
-	u_long  sctps_timoheartbeat;       /* */
-	u_long  sctps_timocookie;          /* */
-	u_long  sctps_timosecret;          /* */
-	u_long  sctps_timopathmtu;         /* */
-	u_long  sctps_timoshutdownack;     /* */
-	u_long  sctps_timoshutdownguard;   /* */
-	u_long  sctps_timostrmrst;         /* */
-	u_long  sctps_timoearlyfr;         /* */
-	u_long  sctps_timoasconf;          /* */
-	u_long  sctps_timoautoclose;       /* */
-	u_long  sctps_timoassockill;       /* */
-	u_long  sctps_timoinpkill;         /* */
+	u_long  sctps_timoiterator;        /* Number of iterator timers that fired */
+	u_long  sctps_timodata;            /* Number of T3 data time outs */
+	u_long  sctps_timowindowprobe;     /* Number of window probe (T3) timers that fired */
+	u_long  sctps_timoinit;            /* Number of INIT timers that fired */
+	u_long  sctps_timosack;            /* Number of sack timers that fired */
+	u_long  sctps_timoshutdown;        /* Number of shutdown timers that fired */
+	u_long  sctps_timoheartbeat;       /* Number of heartbeat timers that fired */
+	u_long  sctps_timocookie;          /* Number of times a cookie timeout fired */
+	u_long  sctps_timosecret;          /* Number of times an endpoint changed its cookie secret*/
+	u_long  sctps_timopathmtu;         /* Number of PMTU timers that fired */
+	u_long  sctps_timoshutdownack;     /* Number of shutdown ack timers that fired */
+	u_long  sctps_timoshutdownguard;   /* Number of shutdown guard timers that fired */
+	u_long  sctps_timostrmrst;         /* Number of stream reset timers that fired */
+	u_long  sctps_timoearlyfr;         /* Number of early FR timers that fired */
+	u_long  sctps_timoasconf;          /* Number of times an asconf timer fired */
+	u_long  sctps_timoautoclose;       /* Number of times auto close timer fired */
+	u_long  sctps_timoassockill;       /* Number of asoc free timers expired */
+	u_long  sctps_timoinpkill;         /* Number of inp free timers expired */
 	/* Early fast retransmission counters */
 	u_long  sctps_earlyfrstart;        
 	u_long  sctps_earlyfrstop;
@@ -857,13 +850,21 @@ struct	sctpstat {
 	u_long  sctps_naglesent;        /* nagle allowed sending      */
 	u_long  sctps_naglequeued;      /* nagle does't allow sending */
 	u_long  sctps_maxburstqueued;   /* max burst dosn't allow sending */
-	u_long  sctps_ifnomemqueued;    /*  */
+	u_long  sctps_ifnomemqueued;    /* look ahead tells us no memory in 
+                                         * interface ring buffer OR we had a
+					 * send error and are queuing one send.
+                                         */
 	u_long  sctps_windowprobed;     /* total number of window probes sent */
-	u_long  sctps_lowlevelerr;
-	u_long  sctps_lowlevelerrusr;
-	u_long  sctps_datadropchklmt;
-	u_long  sctps_datadroprwnd;
-	u_long  sctps_ecnereducedcwnd;
+	u_long  sctps_lowlevelerr;	/* total times an output error causes us
+					 * to clamp down on next user send.
+					 */
+	u_long  sctps_lowlevelerrusr;	/* total times sctp_senderrors were caused from
+					 * a user send from a user invoked send not
+					 * a sack response
+					 */
+	u_long  sctps_datadropchklmt;	/* Number of in data drops due to chunk limit reached */
+	u_long  sctps_datadroprwnd;	/* Number of in data drops due to rwnd limit reached */
+	u_long  sctps_ecnereducedcwnd;  /* Number of times a ECN reduced the cwnd */
 	u_long  sctps_vtagexpress;	/* Used express lookup via vtag */
 	u_long  sctps_vtagbogus;	/* Collision in express lookup. */
 	u_long  sctps_primary_randry;	/* Number of times the sender ran dry of user data on primary */
@@ -871,14 +872,15 @@ struct	sctpstat {
 	u_long  sctps_slowpath_sack;    /* Sacks the slow way */
 	u_long  sctps_wu_sacks_sent;	/* Window Update only sacks sent */
 	u_long  sctps_sends_with_flags; /* number of sends with sinfo_flags !=0 */
-	u_long  sctps_sends_with_unord; 
-	u_long  sctps_sends_with_eof; 
-	u_long  sctps_sends_with_abort; 
-	u_long  sctps_protocol_drain_calls;
-	u_long  sctps_protocol_drains_done;
-#if defined(__Windows__)
-	KMUTEX *mtx;
-#endif
+	u_long  sctps_sends_with_unord	/* number of undordered sends */; 
+	u_long  sctps_sends_with_eof; 	/* number of sends with EOF flag set */
+	u_long  sctps_sends_with_abort; /* number of sends with ABORT flag set */
+	u_long  sctps_protocol_drain_calls;	/* number of times protocol drain called */
+	u_long  sctps_protocol_drains_done; 	/* number of times we did a protocol drain */
+	u_long  sctps_read_peeks;	/* Number of times recv was called with peek */
+	u_long  sctps_cached_chk;       /* Number of cached chunks used */
+	u_long  sctps_cached_strmoq;    /* Number of cached stream oq's used */
+	u_long  sctps_left_abandon;     /* Number of unread message abandonded by close */
 };
 
 #define SCTP_STAT_INCR(_x) SCTP_STAT_INCR_BY(_x,1)
@@ -978,20 +980,17 @@ int
 sctp_lower_sosend(struct socket *so,
     struct sockaddr *addr,
     struct uio *uio,
-#if defined(__Windows__)
-    struct mpkt *top,
-#else
+
     struct mbuf *top,
-#endif
     struct mbuf *control,
     int flags,
     int use_rcvinfo,
     struct sctp_sndrcvinfo *srcv
-#if !defined(__Windows__)
+#ifndef __Panda__
 #if defined(__FreeBSD__) && __FreeBSD_version >= 500000
-    , struct thread *p
+    ,struct thread *p
 #else
-    , struct proc *p
+    ,struct proc *p
 #endif
 #endif
 );
@@ -1017,7 +1016,7 @@ sctp_sorecvmsg(struct socket *so,
 __BEGIN_DECLS
 int sctp_peeloff __P((int, sctp_assoc_t));
 int sctp_bindx __P((int, struct sockaddr *, int, int));
-int sctp_connectx __P((int, const struct sockaddr *, int));
+int sctp_connectx __P((int, const struct sockaddr *, int, sctp_assoc_t *));
 int sctp_getaddrlen __P((sa_family_t));
 int sctp_getpaddrs __P((int, sctp_assoc_t, struct sockaddr **));
 void sctp_freepaddrs __P((struct sockaddr *));

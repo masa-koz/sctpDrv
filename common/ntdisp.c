@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntdisp.c,v 1.4 2007/04/23 15:49:41 kozuka Exp $
+ * $Id: ntdisp.c,v 1.5 2007/04/25 11:44:56 kozuka Exp $
  */
 #include "globals.h"
 
@@ -43,8 +43,8 @@ typedef struct sctp_context {
 #include <netinet/sctputil.h>
 #include <netinet/sctp_output.h>
 
-int sctp_attach(struct socket *);
-int sctp_bind(struct socket *, struct sockaddr *);
+int sctp_attach(struct socket *, int proto, struct proc *);
+int sctp_bind(struct socket *, struct sockaddr *, struct proc *);
 int sctp_detach(struct socket *);
 int sctp_disconnect(struct socket *);
 #if 0
@@ -780,14 +780,14 @@ TdiOpenAddress(
 	SOCKBUF_LOCK_INIT(&so->so_snd);
 	so->so_type = type;
 
-	error = sctp_attach(so);
+	error = sctp_attach(so, IPPROTO_SCTP, NULL);
 	if (error != 0) {
 		DbgPrint("sctp_attach failed, error=%d\n", error);
 		ExFreePool(so);
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
 
-	error = sctp_bind(so, addr);
+	error = sctp_bind(so, addr, NULL);
 	if (error != 0) {
 		DbgPrint("sctp_bind failed, error=%d\n", error);
 		sctp_detach(so);
@@ -995,7 +995,7 @@ TdiReceiveDatagramCommon(
 				    SCTP_BUF_LEN(control));
 				drr->drr_conninfo->OptionsLength = SCTP_BUF_LEN(control);
 			}
-			SCTP_BUF_FREE_ALL(control);
+			m_freem(control);
 		}
 		if (receivedLength != NULL) {
 			*receivedLength = (ULONG)uio.uio_offset;
@@ -1014,7 +1014,7 @@ TdiReceiveDatagramCommon(
 			ExFreePool(from);
 		}
 		if (control != NULL) {
-			SCTP_BUF_FREE_ALL(control);
+			m_freem(control);
 		}
 		DbgPrint("TdiReceiveDatagramCommon: leave #3\n");
 		return STATUS_INVALID_PARAMETER;
@@ -1058,6 +1058,7 @@ TdiSendDatagram(
     IN PNDIS_BUFFER buffer)
 {
 	NTSTATUS status = STATUS_SUCCESS;
+	KIRQL oldIrql;
 	struct socket *so;
 	int error = 0;
 	struct sockaddr *addr = NULL;
@@ -1066,6 +1067,9 @@ TdiSendDatagram(
 	PSCTP_DGSND_REQUEST dsr;
 
 	DbgPrint("TdiSendDatagram: enter\n");
+
+	KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
+
 	so = (struct socket *)request->Handle.AddressHandle;
 
 	RtlZeroMemory(&uio, sizeof(uio));
@@ -1098,7 +1102,7 @@ TdiSendDatagram(
 		}
 	}
 
-	error = sctp_sosend(so, addr, &uio, NULL, control, MSG_NBIO);
+	error = sctp_sosend(so, addr, &uio, NULL, control, MSG_NBIO, NULL);
 	DbgPrint("TdiSendDatagram: sctp_sosend=%d\n", error);
 	if (error != EWOULDBLOCK) {
 		if (error == 0) {
@@ -1130,12 +1134,16 @@ TdiSendDatagram(
 	SOCKBUF_UNLOCK(&so->so_snd);
 
 	DbgPrint("TdiSendDatagram: leave\n");
+
+	KeLowerIrql(oldIrql);
 	return STATUS_PENDING;
 
 done:
 	if (addr != NULL) {
 		ExFreePool(addr);
 	}
+	KeLowerIrql(oldIrql);
+
 	DbgPrint("TdiSendDatagram: leave #0\n");
 	return status;
 }
@@ -1218,8 +1226,8 @@ sorwakeup_locked(
 			if (m != NULL) {
 				n = m;
 				while (n != NULL) {
-					length += SCTP_BUF_GET_LEN(n);
-					n = SCTP_BUF_GET_NEXT(n);
+					length += SCTP_BUF_LEN(n);
+					n = SCTP_BUF_NEXT(n);
 				}
 			}
 			rcvdgStatus = (*(so->so_rcvdg))(so->so_rcvdgarg,
@@ -1228,7 +1236,7 @@ sorwakeup_locked(
 			    0,
 			    NULL,
 			    TDI_RECEIVE_COPY_LOOKAHEAD,
-			    SCTP_BUF_GET_LEN(m),
+			    SCTP_BUF_LEN(m),
 			    length,
 			    &bytesTaken,
 			    SCTP_BUF_AT(m, 0),
@@ -1243,11 +1251,11 @@ sorwakeup_locked(
 				uio.uio_buffer = irp->MdlAddress;
 				uio.uio_resid = datagramInformation->ReceiveLength;
 				uio.uio_rw = UIO_READ;
-				uiomove(SCTP_BUF_AT(m, bytesTaken), SCTP_BUF_GET_LEN(m) - bytesTaken, &uio);
-				n = SCTP_BUF_GET_NEXT(m);
+				uiomove(SCTP_BUF_AT(m, bytesTaken), SCTP_BUF_LEN(m) - bytesTaken, &uio);
+				n = SCTP_BUF_NEXT(m);
 				while (n != NULL) {
-					uiomove(SCTP_BUF_AT(n, 0), SCTP_BUF_GET_LEN(n), &uio);
-					n = SCTP_BUF_GET_NEXT(n);
+					uiomove(SCTP_BUF_AT(n, 0), SCTP_BUF_LEN(n), &uio);
+					n = SCTP_BUF_NEXT(n);
 				}
 				irp->IoStatus.Information = length - bytesTaken;
 				irp->IoStatus.Status = STATUS_SUCCESS;
@@ -1294,7 +1302,7 @@ sowwakeup_locked(
 			}
 		}
 
-		error = sctp_sosend(so, dsr->dsr_addr, &uio, NULL, control, MSG_NBIO);
+		error = sctp_sosend(so, dsr->dsr_addr, &uio, NULL, control, MSG_NBIO, NULL);
 		DbgPrint("sorwakeup: sctp_sosend=%d\n", error);
 		if (error == EWOULDBLOCK) {
 			break;

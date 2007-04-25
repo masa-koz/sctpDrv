@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: sctp_os_windows.h,v 1.4 2007/04/23 15:53:06 kozuka Exp $
+ * $Id: sctp_os_windows.h,v 1.5 2007/04/25 11:49:44 kozuka Exp $
  */
 #ifndef __sctp_os_windows_h__
 #define __sctp_os_windows_h__
@@ -29,13 +29,22 @@
  * includes
  */
 #include "globals.h"
+
+#include "mbuf.h"
+
 #include "if.h"
 #include "route.h"
 
-#if defined(HAVE_SCTP_PEELOFF_SOCKOPT)
-#include <sys/file.h>
-#include <sys/filedesc.h>
-#endif
+
+#undef TYPE_ALIGNMENT
+#define TYPE_ALIGNMENT( t ) __alignof(t)
+
+#define cmsghdr wsacmsghdr
+#define CMSG_ALIGN TDI_CMSGHDR_ALIGN
+#define CMSGDATA_ALIGN TDI_CMSGDATA_ALIGN
+#define CMSG_DATA TDI_CMSG_DATA
+#define CMSG_SPACE TDI_CMSG_SPACE
+#define CMSG_LEN TDI_CMSG_LEN
 
 struct iovec {
 	void	*iov_base;	/* Base address. */
@@ -65,7 +74,60 @@ struct uio {
 
 int uiomove(void *, unsigned int, struct uio *);
 
+typedef struct route sctp_route_t;
+#define NEW_STRUCT_ROUTE
+
 typedef void (*RequestCompleteRoutine)(void *, unsigned int, unsigned int);
+
+
+/* flags passed to ip_output as last parameter */
+#define IP_FORWARDING           0x1             /* most of ip header exists */
+#define IP_RAWOUTPUT            0x2             /* raw ip header exists */
+#define IP_SENDONES             0x4             /* send all-ones broadcast */
+#define IP_ROUTETOIF            SO_DONTROUTE    /* bypass routing tables */
+#define IP_ALLOWBROADCAST       SO_BROADCAST    /* can send broadcast packets */
+
+NTSTATUS IPOutput(IN struct mbuf *, IN struct route *);
+__inline int
+ip_output(
+    struct mbuf *m,
+    void *opt,
+    struct route *ro,
+    int flags,
+    void *imo)
+{
+	NTSTATUS status;
+	status = IPOutput(m, ro);
+	if (status == STATUS_SUCCESS || status == STATUS_PENDING) {
+		return 0;
+	} else {
+		return EINVAL;
+	}
+}
+NTSTATUS IP6Output(IN struct mbuf *, IN struct route *);
+__inline int
+ip6_output(
+    struct mbuf *m0,
+    void *opt,
+    struct route *ro,
+    int flags,
+    void *im6o,
+    struct ifnet **ifpp)
+{
+	NTSTATUS status;
+	status = IP6Output(m0, ro);
+	if (status == STATUS_SUCCESS || status == STATUS_PENDING) {
+		return 0;
+	} else {
+		return EINVAL;
+	}
+}
+
+extern uint16_t ip_id;
+
+struct proc {
+	uint8_t dummy;
+};
 
 typedef struct sctp_dgrcv_request {
 	BOOLEAN drr_queued;
@@ -90,519 +152,7 @@ typedef struct sctp_dgsnd_request {
 } SCTP_DGSND_REQUEST, *PSCTP_DGSND_REQUEST;
 STAILQ_HEAD(sctp_dgsnd_request_head, sctp_dgsnd_request);
 
-extern NPAGED_LOOKASIDE_LIST ExtBufLookaside;
-extern NDIS_HANDLE SctpBufferPool;
-extern NDIS_HANDLE SctpPacketPool;
-
-/*
- * flags to malloc.
- */
-#define M_NOWAIT	0x0001		/* do not block */
-#define M_WAITOK	0x0002		/* ok to block */
-#define M_ZERO		0x0100		/* bzero the allocation */
-#define M_NOVM		0x0200		/* don't ask VM for pages */
-#define M_USE_RESERVE	0x0400		/* can alloc out of reserve memory */
-#define	M_NOTIFICATION	0x2000		/* SCTP notification */
-
-#if 1
-#include "mbuf.h"
-
-#if 1
-#define SCTP_BUF_INIT() do { \
-	NTSTATUS _status; \
-	NdisAllocateBufferPool(&_status, &SctpBufferPool, 100); \
-} while (0)
-
-#define	SCTP_BUF_DESTROY() do { \
-	NdisFreeBufferPool(SctpBufferPool); \
-} while (0)
-#define SCTP_BUF_GET_LEN(m) ((m)->m_len)
-#define SCTP_BUF_SET_LEN(m, len) ((m)->m_len) = (len)
-#define SCTP_BUF_GET_NEXT(m) ((m)->m_next)
-#define SCTP_BUF_SET_NEXT(m, next) ((m)->m_next) = (next)
-#define SCTP_BUF_GET_NEXT_PKT(m) (m)->m_nextpkt
-#define SCTP_BUF_SET_NEXT_PKT(m, next) ((m)->m_nextpkt) = (next)
-//#define SCTP_BUF_ALLOC(n, size) (n) = sctp_get_mbuf_for_msg(size, 0, M_WAIT, 0, MT_DATA)
-#define SCTP_BUF_FREE(n, m) (n) = m_free((m))
-#define SCTP_BUF_FREE_ALL(m) m_freem((m))
-#define SCTP_BUF_SPACE M_TRAILINGSPACE
-#define SCTP_BUF_REFCOPY(n, m, offset, len, how) do { (n) = m_copym((m), (offset), (len), (how)); } while(0)
-#define SCTP_BUF_ADJUST m_adj
-#define SCTP_BUF_SPLIT(n, m, len, how) (n) = m_split((m), (len), (how))
-#define SCTP_BUF_COPYBACK m_copyback
-#define SCTP_BUF_COPYDATA m_copydata
-#define SCTP_HEADER_FREE m_freem
-#define mpkt mbuf
-#endif
-
-#define SCTP_BUF_LEN(m) (m->m_len)
-#define SCTP_BUF_NEXT(m) (m->m_next)
-#define SCTP_BUF_NEXT_PKT(m) (m->m_nextpkt)
-#define SCTP_BUF_RESV_UF(m, size) m->m_data += size
-#define SCTP_BUF_AT(m, size) m->m_data + size
-#define SCTP_BUF_IS_EXTENDED(m) (m->m_flags & M_EXT)
-#define SCTP_BUF_EXTEND_SIZE(m) (m->m_ext.ext_size)
-#define SCTP_BUF_TYPE(m) (m->m_type)
-#define SCTP_BUF_RECVIF(m) (m->m_pkthdr.rcvif)
-#define SCTP_BUF_PREPEND        M_PREPEND
-/*************************/
-/* These are for logging */
-/*************************/
-/* return the base ext data pointer */
-#define SCTP_BUF_EXTEND_BASE(m) (m->m_ext.ext_buf->data)
- /* return the refcnt of the data pointer */
-#define SCTP_BUF_EXTEND_REFCNT(m) (m->m_ext.ext_buf->ref_cnt)
-/* return any buffer related flags, this is
- * used beyond logging for apple only.
- */
-#define SCTP_BUF_GET_FLAGS(m) (m->m_flags)
-
-/* For BSD this just accesses the M_PKTHDR length
- * so it operates on an mbuf with hdr flag. Other
- * O/S's may have seperate packet header and mbuf
- * chain pointers.. thus the macro.
- */
-#define SCTP_HEADER_TO_CHAIN(m) (m)
-#define SCTP_HEADER_LEN(m) (m->m_pkthdr.len)
-#define SCTP_GET_HEADER_FOR_OUTPUT(len) sctp_get_mbuf_for_msg(len, 1, M_DONTWAIT, 1, MT_DATA)
-
-/* Attach the chain of data into the sendable packet. */
-#define SCTP_ATTACH_CHAIN(pak, m, packet_length) do { \
-	pak->m_next = m; \
-	pak->m_pkthdr.len = packet_length; \
-} while(0)
-
-#else
-struct m_ext {
-	ULONG	size;
-	ULONG	ref_cnt;
-	UCHAR	data[0];
-};
-
-struct m_pkt {
-	ULONG	len;
-};
-
-struct mbuf {
-	struct mbuf	*m_nextpkt;
-	struct mbuf	*m_next;
-	struct m_pkt	m_pkthdr;
-	struct m_ext	*m_ext;
-	UCHAR		*m_data;
-	NDIS_BUFFER	*ndis_buffer;
-};
-#define mpkt mbuf
-
-
-#define	MCLBYTES	2048
-
-#define M_MAGIC         877983977       /* time when first defined :-) */
-
-#define MBTOM(how)      (how)
-#define M_DONTWAIT      M_NOWAIT
-#define M_TRYWAIT       M_WAITOK
-#define M_WAIT          M_WAITOK
-
-#define M_COPYALL	1000000000
-
-/*
- * mbuf types.
- */
-#define MT_NOTMBUF      0       /* USED INTERNALLY ONLY! Object is not mbuf */
-#define MT_DATA         1       /* dynamic (data) allocation */
-#define MT_HEADER       2       /* packet header */
-#if 0
-#define MT_SOCKET       3       /* socket structure */
-#define MT_PCB          4       /* protocol control block */
-#define MT_RTABLE       5       /* routing tables */
-#define MT_HTABLE       6       /* IMP host tables */
-#define MT_ATABLE       7       /* address resolution tables */
-#endif
-#define MT_SONAME       8       /* socket name */
-#if 0
-#define MT_SOOPTS       10      /* socket options */
-#endif
-#define MT_FTABLE       11      /* fragment reassembly header */
-#if 0
-#define MT_RIGHTS       12      /* access rights */
-#define MT_IFADDR       13      /* interface address */
-#endif
-#define MT_CONTROL      14      /* extra-data protocol message */
-#define MT_OOBDATA      15      /* expedited data  */
-#define MT_NTYPES       16      /* number of mbuf types for mbtypes[] */
-
-#define MT_NOINIT       255     /* Not a type but a flag to allocate
-                                   a non-initialized mbuf */
-
-#define mtod(_m, _type)	(_type)((_m)->m_data)
-/*
- * Functions
- */
-/* Mbuf manipulation and access macros  */
-#define SCTP_BUF_INIT() do { \
-	NTSTATUS _status; \
-	NdisAllocateBufferPool(&_status, &SctpBufferPool, 100); \
-	ExInitializeNPagedLookasideList(&ExtBufLookaside, NULL, NULL, 0, sizeof(struct m_ext) + 2048, 0x64657246, 0); \
-} while (0)
-
-#define	SCTP_BUF_DESTROY() do { \
-	NdisFreeBufferPool(SctpBufferPool); \
-	ExDeleteNPagedLookasideList(&ExtBufLookaside); \
-} while (0)
-
-#define SCTP_BUF_ALLOC(m, len)	do { \
-	DbgPrint("%s[%d]\n", __FILE__, __LINE__); \
-	(m) = sctp_buf_alloc((len)); \
-} while (0)
-__inline struct mbuf *
-sctp_buf_alloc(int len)
-{
-	struct mbuf *m;
-	NTSTATUS status;
-	m = ExAllocatePool(NonPagedPool, sizeof(*m));
-	if (m == NULL) {
-		return NULL;
-	}
-	RtlZeroMemory(m, sizeof(*m));
-	if (len > 0) {
-		(m)->m_ext = ExAllocateFromNPagedLookasideList(&ExtBufLookaside);
-		if ((m)->m_ext == NULL) {
-			ExFreePool(m);
-			return NULL;
-		}
-		DbgPrint("sctp_buf_alloc: m->m_ext => %p\n", m->m_ext);
-		RtlZeroMemory(&m->m_ext->data, 2048);
-		m->m_ext->size = 2048;
-		m->m_ext->ref_cnt = 1;
-		m->m_data = m->m_ext->data;
-		NdisAllocateBuffer(&status, &m->ndis_buffer, SctpBufferPool, m->m_data, 2048);
-		if (status != NDIS_STATUS_SUCCESS) {
-			ExFreeToNPagedLookasideList(&ExtBufLookaside, m->m_ext);
-			ExFreePool(m);
-			return NULL;
-		}
-	}
-	return m;
-}
-
-#define SCTP_BUF_FREE(n, m) do { \
-	DbgPrint("%s[%d]\n", __FILE__, __LINE__); \
-	(n) = sctp_buf_free((m)); \
-} while (0)
-__inline struct mbuf*
-sctp_buf_free(struct mbuf *m)
-{
-	struct mbuf *n;
-
-#ifdef SCTP_MBUF_LOGGING
-	sctp_log_mb(m, SCTP_MBUF_IFREE);
-#endif
-	n = m->m_next;
-	if (m->ndis_buffer != NULL) {
-		NdisFreeBuffer((m)->ndis_buffer);
-	}
-	atomic_subtract_int(&m->m_ext->ref_cnt, 1);
-	if (m->m_ext->ref_cnt == 0) {
-		DbgPrint("_SCTP_BUF_FREE: m->m_ext => %p\n", m->m_ext);
-		ExFreeToNPagedLookasideList(&ExtBufLookaside, m->m_ext);
-	}
-	ExFreePool(m);
-	return n;
-}
-
-#define SCTP_BUF_FREE_ALL(m) do { \
-	DbgPrint("%s[%d]\n", __FILE__, __LINE__); \
-	sctp_buf_free_all(m); \
-} while (0)
-__inline void
-sctp_buf_free_all(struct mbuf *m0)
-{
-	struct mbuf *m, *n;
-	for (m = m0; m != NULL; m = n) {
-		DbgPrint("m => %p\n", m);
-		n = sctp_buf_free(m);
-	} \
-}
-
-#define SCTP_BUF_SET_LEN(m, len) do { \
-	NdisAdjustBufferLength((m)->ndis_buffer, (len)); \
-} while (0)
-
-#define SCTP_BUF_SET_NEXT(m, n) do { \
-	(m)->m_next = (n); \
-	if ((n) != NULL) { \
-		NDIS_BUFFER_LINKAGE((m)->ndis_buffer) = ((struct mbuf *)(n))->ndis_buffer; \
-	} \
-} while (0)
-
-#define SCTP_BUF_GET_LEN(m) NdisBufferLength((m)->ndis_buffer)
-#define SCTP_BUF_GET_NEXT(m) (m)->m_next
-#define SCTP_BUF_NEXT_PKT(m)
-#define SCTP_BUF_RESV_UF(m, size) (m)->m_data += size
-#define SCTP_BUF_AT(m, size) ((m)->m_data + size)
-#define SCTP_BUF_IS_EXTENDED(m) (1)
-#define SCTP_BUF_EXTEND_SIZE(m) (m->m_ext->size)
-#define SCTP_BUF_TYPE(m)
-#define SCTP_BUF_RECVIF(m)
-#define SCTP_BUF_PREPEND(a, b, c)
-
-#define SCTP_BUF_SPACE(m) ((m)->m_ext->size - NdisBufferLength((m)->ndis_buffer))
-
-#define	SCTP_BUF_COPYBACK sctp_buf_copyback
-__inline int
-sctp_buf_copyback(struct mbuf *m0, ULONG off, ULONG len, uchar *cp) {
-	struct mbuf *m = m0, *n = NULL;
-	ULONG mlen = 0;
-	while (off > (mlen = SCTP_BUF_SPACE(m))) {
-		off -= mlen;
-		if (SCTP_BUF_GET_NEXT(m) == NULL) {
-			SCTP_BUF_ALLOC(n, 1500);
-			if (n == NULL) {
-				return -1;
-			}
-			RtlZeroMemory(SCTP_BUF_AT(n, 0), SCTP_BUF_SPACE(n));
-			SCTP_BUF_SET_NEXT(m, n);
-		}
-		m = SCTP_BUF_GET_NEXT(m);
-	}
-	while (len > 0) {
-		mlen = min(SCTP_BUF_SPACE(m) - off, len);
-		RtlCopyMemory(SCTP_BUF_AT(m, off), cp, mlen);
-		SCTP_BUF_SET_LEN(m, SCTP_BUF_GET_LEN(m) + mlen);
-		cp += mlen;
-		len -= mlen;
-		mlen += off;
-		off = 0;
-		if (len == 0) {
-			break;
-		}
-		if (SCTP_BUF_GET_NEXT(m) == NULL) {
-			SCTP_BUF_ALLOC(n, 1500);
-			if (n == NULL) {
-				return -1;
-			}
-			RtlZeroMemory(SCTP_BUF_AT(n, 0), SCTP_BUF_SPACE(m));
-			SCTP_BUF_SET_NEXT(m, n);
-		}
-		m = SCTP_BUF_GET_NEXT(m);
-	}
-	return 0;
-}
-
-#define SCTP_BUF_COPYDATA(m, offset, len, data) \
-	RtlCopyMemory((data), SCTP_BUF_AT((m), (offset)), \
-	    (SCTP_BUF_GET_LEN((m)) - (offset)) < (len) ? \
-		(SCTP_BUF_GET_LEN((m)) - (offset)) : (len))
-
-#define SCTP_BUF_REFCOPY(n, m, offset, len, how) (n) = sctp_buf_refcopy((m), (offset), (len))
-__inline struct mbuf *
-sctp_buf_refcopy(struct mbuf *m0, int offset, int len)
-{
-	struct mbuf *m, *m1, *m2, *n;
-	struct mbuf *top = NULL;
-	NTSTATUS status;
-
-	for (m = m0; m != NULL && offset > (int)SCTP_BUF_GET_LEN(m); m = SCTP_BUF_GET_NEXT(m)) {
-		offset -= (int)SCTP_BUF_GET_LEN(m);
-	}
-	if (m == NULL) {
-		return NULL;
-	}
-	m1 = m;
-
-	for (m = m1; m != NULL; m = SCTP_BUF_GET_NEXT(m)) {
-		SCTP_BUF_ALLOC(n, 0);
-		if (n == NULL) {
-			goto error;
-		}
-		n->m_ext = m->m_ext;
-		n->m_data = m->m_data + offset;
-
-		if (len == M_COPYALL || len >= (int)SCTP_BUF_GET_LEN(m)) {
-			NdisAllocateBuffer(&status, &n->ndis_buffer, SctpBufferPool, n->m_data,
-			    SCTP_BUF_GET_LEN(m) - offset);
-		} else {
-			NdisAllocateBuffer(&status, &n->ndis_buffer, SctpBufferPool, n->m_data,
-			    len);
-		}
-
-		if (status != NDIS_STATUS_SUCCESS) {
-			goto error;
-		}
-
-		atomic_add_int(&m->m_ext->ref_cnt, 1);
-		if (len != M_COPYALL) {
-			len -= (int)SCTP_BUF_GET_LEN(m);
-			if (len < 0) {
-				return top;
-			}
-		}
-		if (top == NULL) {
-			top = n;
-		}
-		offset = 0;
-	}
-
-	return top;
-error:
-	if (top != NULL) {
-		SCTP_BUF_FREE_ALL(top);
-	}
-	m2 = m;
-	for (m = m1; m != m2; m = SCTP_BUF_GET_NEXT(m)) {
-		atomic_subtract_int(&m->m_ext->ref_cnt, 1);
-	}
-	return NULL;
-}
-
-#define SCTP_BUF_SPLIT(n, m, len, how)	(n) = sctp_buf_split((m), (len))
-__inline struct mbuf *
-sctp_buf_split(struct mbuf *m0, unsigned int offset)
-{
-	struct mbuf *m, *n;
-	unsigned int len;
-
-	for (m = m0; m != NULL && offset > SCTP_BUF_GET_LEN(m); m = SCTP_BUF_GET_NEXT(m)) {
-		offset -= SCTP_BUF_GET_LEN(m);
-	}
-	if (m == NULL) {
-		return NULL;
-	}
-	len = SCTP_BUF_GET_LEN(m) - offset;
-
-	SCTP_BUF_ALLOC(n, len);
-	if (n == NULL) {
-		return NULL;
-	}
-	RtlCopyMemory(SCTP_BUF_AT(n, 0), SCTP_BUF_AT(m, offset), len);
-	SCTP_BUF_SET_LEN(m, offset);
-	SCTP_BUF_SET_LEN(n, len);
-
-	return n;
-}
-
-#define SCTP_BUF_ADJUST(m, len) do { \
-	struct mbuf *_m, *_n; \
-	int _len; \
-	_m = (m); \
-	_len = (int)(len); \
-	if (_len >= 0) { \
-		while (_m != NULL && _len > 0) { \
-			if (SCTP_BUF_GET_LEN(_m) < (unsigned int)(_len)) { \
-				_len -= SCTP_BUF_GET_LEN(_m); \
-				SCTP_BUF_SET_LEN(_m, 0); \
-				_m = SCTP_BUF_GET_NEXT(_m); \
-			} else { \
-				SCTP_BUF_SET_LEN(_m, SCTP_BUF_GET_LEN(_m) - _len); \
-				_m->m_data += _len; \
-				_n = NULL; \
-				SCTP_BUF_REFCOPY(_n, _m, _len, M_COPYALL, 0); \
-				SCTP_BUF_SET_LEN(_m, 0); \
-				SCTP_BUF_SET_NEXT(_n, SCTP_BUF_GET_NEXT(_m)); \
-				SCTP_BUF_SET_NEXT(_m, _m); \
-				_len = 0; \
-			} \
-		} \
-	} \
-} while (0)
-/*************************/
-/* These are for logging */
-/*************************/
-/* return the base ext data pointer */
-#define SCTP_BUF_EXTEND_BASE(m) (m->m_ext.ext_buf)
- /* return the refcnt of the data pointer */
-#define SCTP_BUF_EXTEND_REFCNT(m) (m->m_ext.ref_cnt)
-/* return any buffer related flags, this is
- * used beyond logging for apple only.
- */
-#define SCTP_BUF_GET_FLAGS(m) 0
-
-/* For BSD this just accesses the M_PKTHDR length
- * so it operates on an mbuf with hdr flag. Other
- * O/S's may have seperate packet header and mbuf
- * chain pointers.. thus the macro.
- */
-
-#define SCTP_HEADER_TO_CHAIN(m)		(m)
-#define SCTP_HEADER_LEN(m)		((m)->m_pkthdr.len)
-#define SCTP_HEADER_FREE(pak)		SCTP_BUF_FREE_ALL((pak))
-#define SCTP_GET_HEADER_FOR_OUTPUT(len) sctp_buf_alloc(len)
-	
-#define SCTP_ATTACH_CHAIN(pak, m, packet_length) do { \
-	SCTP_BUF_SET_NEXT((pak), (m)); \
-	(pak)->m_pkthdr.len = packet_length; \
-} while(0)
-#endif
-
-#if 0
-#define SCTP_HEADER_INIT() do { \
-	NDIS_STATUS _status; \
-	NdisAllocatePacketPool(&_status, &SctpPacketPool, 100, 0); \
-} while (0)
-
-#define	SCTP_HEADER_DESTROY() \
-	NdisFreePacketPool(SctpPacketPool)
-
-#define SCTP_HEADER_TO_CHAIN(pak)	(pak)
-
-#define SCTP_HEADER_LEN(pak)	(pak)->m_pkt.pkt_len
-
-#define SCTP_GET_HEADER(pak) do { \
-	if ((pak)->m_pkt.ndis_packet == NULL) { \
-		NTSTATUS _status; \
-		NdisAllocatePacket(&_status, &(pak)->m_pkt.ndis_packet, SctpPacketPool); \
-		NdisChainBufferAtBack((pak)->m_pkt.ndis_packet, (pak)->ndis_buffer); \
-	} \
-} while (0)
-
-__inline struct mbuf *
-SCTP_GET_HEADER_FOR_OUTPUT(len)
-{
-	struct mbuf *pak, *n;
-
-	SCTP_BUF_ALLOC(pak, len);
-	if (pak == NULL) {
-		return NULL;
-	}
-	SCTP_GET_HEADER(pak);
-	pak->m_pkt.pkt_len = len;
-	if (pak->m_pkt.ndis_packet == NULL) {
-		SCTP_BUF_FREE(n, pak);
-		return NULL;
-	}
-	return pak;
-}
-
-#define SCTP_HEADER_FREE(pak) do { \
-	if ((pak)->m_pkt.ndis_packet != NULL) { \
-		NdisFreePacket((pak)->m_pkt.ndis_packet); \
-	} \
-	SCTP_BUF_FREE_ALL((pak)); \
-} while (0)
-
-/* Attach the chain of data into the sendable packet. */
-#define SCTP_ATTACH_CHAIN(pak, n, packet_length) do { \
-	if ((pak)->m_pkt.ndis_packet != NULL) { \
-		(pak)->m_next = (n); \
-		NdisChainBufferAtBack((pak)->m_pkt.ndis_packet, (n)->ndis_buffer); \
-		(pak)->m_pkt.pkt_len = packet_length; \
-	} else { \
-		SCTP_BUF_SET_NEXT((pak), (n)); \
-	} \
-} while (0);
-#endif
-
 typedef	u_short	sa_family_t;
-
-#undef TYPE_ALIGNMENT
-#define TYPE_ALIGNMENT( t ) __alignof(t)
-
-#define cmsghdr wsacmsghdr
-#define CMSG_ALIGN TDI_CMSGHDR_ALIGN
-#define CMSGDATA_ALIGN TDI_CMSGDATA_ALIGN
-#define CMSG_DATA TDI_CMSG_DATA
-#define CMSG_SPACE TDI_CMSG_SPACE
-#define CMSG_LEN TDI_CMSG_LEN
 
 /*-
  * Locking key to struct socket:
@@ -827,7 +377,11 @@ struct sockaddr *sodupsockaddr(struct sockaddr *, int);
 #define SOCK_RDM	0x04
 #define	SOCK_SEQPACKET	0x05
 
+#define SCTP_SB_LIMIT_RCV(so)	so->so_rcv.sb_hiwat
+#define SCTP_SB_LIMIT_SND(so)	so->so_snd.sb_hiwat
+
 struct inpcb {
+	struct route	inp_route;
 	uint16_t	inp_fport;
 	uint16_t	inp_lport;
 	int		inp_flags;
@@ -837,8 +391,8 @@ struct inpcb {
 	VOID 		*inp_moptions;
 	struct mbuf	*in6p_options;
 	VOID		*in6p_outputopts;
+	VOID		*in6p_moptions;
 	uint32_t	in6p_flowinfo;
-
 };
 #define in6pcb	inpcb
 #define	ip_freemoptions(a)
@@ -889,19 +443,15 @@ struct inpcb {
 #define	IN6P_FAITH		INP_FAITH
 #define	IN6P_CONTROLOPTS INP_CONTROLOPTS
 
-/*
- *
- */
-#define USER_ADDR_NULL	(NULL)		/* FIX ME: temp */
-#define SCTP_LIST_EMPTY(list)	LIST_EMPTY(list)
 
 /*
  * Local address and interface list handling
  */
-#define SCTP_MAX_VRF_ID 0
-#define SCTP_SIZE_OF_VRF_HASH 3
-#define SCTP_IFNAMSIZ 255
-#define SCTP_DEFAULT_VRFID 0
+#define SCTP_MAX_VRF_ID		0
+#define SCTP_SIZE_OF_VRF_HASH	3
+#define SCTP_IFNAMSIZ		255
+#define SCTP_DEFAULT_VRFID	0
+#define SCTP_VRF_HASH_SIZE	16
 
 #define SCTP_IFN_IS_IFT_LOOP(ifn) 0
 
@@ -913,6 +463,71 @@ struct inpcb {
 	((ro)->ro_rt != NULL ? (ro)->ro_rt->rt_ifp : NULL)
 #define SCTP_GET_IF_INDEX_FROM_ROUTE(ro) \
 	((ro)->ro_rt != NULL ? ((ro)->ro_rt->rt_ifp != NULL ? (ro)->ro_rt->rt_ifp->if_index : -1): -1)
+
+
+extern NDIS_HANDLE SctpBufferPool;
+
+/*
+ * flags to malloc.
+ */
+#define M_NOWAIT	0x0001		/* do not block */
+#define M_WAITOK	0x0002		/* ok to block */
+#define M_ZERO		0x0100		/* bzero the allocation */
+#define M_NOVM		0x0200		/* don't ask VM for pages */
+#define M_USE_RESERVE	0x0400		/* can alloc out of reserve memory */
+#define	M_NOTIFICATION	0x2000		/* SCTP notification */
+
+#define SCTP_BUF_LEN(m)			(m->m_len)
+#define SCTP_BUF_NEXT(m)		(m->m_next)
+#define SCTP_BUF_NEXT_PKT(m)		(m->m_nextpkt)
+#define SCTP_BUF_RESV_UF(m, size) 	m->m_data += size
+#define SCTP_BUF_AT(m, size)		(m->m_data + size)
+#define SCTP_BUF_IS_EXTENDED(m)		(m->m_flags & M_EXT)
+#define SCTP_BUF_EXTEND_SIZE(m)		(m->m_ext.ext_size)
+#define SCTP_BUF_TYPE(m)		(m->m_type)
+#define SCTP_BUF_RECVIF(m)		(m->m_pkthdr.rcvif)
+#define SCTP_BUF_PREPEND		M_PREPEND
+
+#define SCTP_ALIGN_TO_END(m, len) if(m->m_flags & M_PKTHDR) { \
+	MH_ALIGN(m, len); \
+	} else if ((m->m_flags & M_EXT) == 0) { \
+	M_ALIGN(m, len); \
+}
+
+/*************************/
+/* These are for logging */
+/*************************/
+/* return the base ext data pointer */
+#define SCTP_BUF_EXTEND_BASE(m)		(m->m_ext.ext_buf)
+ /* return the refcnt of the data pointer */
+#define SCTP_BUF_EXTEND_REFCNT(m)	(*m->m_ext.ref_cnt)
+/* return any buffer related flags, this is
+ * used beyond logging for apple only.
+ */
+#define SCTP_BUF_GET_FLAGS(m)		(m->m_flags)
+
+/* For BSD this just accesses the M_PKTHDR length
+ * so it operates on an mbuf with hdr flag. Other
+ * O/S's may have seperate packet header and mbuf
+ * chain pointers.. thus the macro.
+ */
+#define SCTP_HEADER_TO_CHAIN(m)		(m)
+#define SCTP_HEADER_LEN(m)		(m->m_pkthdr.len)
+#define SCTP_GET_HEADER_FOR_OUTPUT(len)	sctp_get_mbuf_for_msg(len, 1, M_DONTWAIT, 1, MT_DATA)
+
+/* Attach the chain of data into the sendable packet. */
+#define SCTP_ATTACH_CHAIN(pak, m, packet_length) do { \
+	pak->m_next = m; \
+	pak->m_pkthdr.len = packet_length; \
+} while(0)
+
+
+/*
+ *
+ */
+#define USER_ADDR_NULL	(NULL)		/* FIX ME: temp */
+#define SCTP_LIST_EMPTY(list)	LIST_EMPTY(list)
+
 
 /*
  * general memory allocation
@@ -936,33 +551,7 @@ struct inpcb {
 
 #define SCTP_PROCESS_STRUCT struct proc *
 
-/*
- * zone allocation functions
- */
 
-/* SCTP_ZONE_INIT: initialize the zone */
-#if 0
-typedef NPAGED_LOOKASIDE_LIST* sctp_zone_t;
-#define UMA_ZFLAG_FULL	0x0020
-#define SCTP_ZONE_INIT(zone, name, size, number) do { \
-	(zone) = ExAllocatePool(NonPagedPool, sizeof(NPAGED_LOOKASIDE_LIST)); \
-	ExInitializeNPagedLookasideList(zone, NULL, NULL, 0, (size), \
-	    0x64657246, 0); \
-} while (0)
-
-/* SCTP_ZONE_GET: allocate element from the zone */
-#define SCTP_ZONE_GET(zone, type) \
-	(type *)ExAllocateFromNPagedLookasideList((zone))
-
-/* SCTP_ZONE_FREE: free element from the zone */
-#define SCTP_ZONE_FREE(zone, element) \
-	ExFreeToNPagedLookasideList((zone), (element))
-
-#define	SCTP_ZONE_DESTROY(zone) do { \
-	ExDeleteNPagedLookasideList((zone)); \
-	ExFreePool((zone)); \
-} while(0)
-#else
 typedef NPAGED_LOOKASIDE_LIST sctp_zone_t;
 #define UMA_ZFLAG_FULL	0x0020
 #define SCTP_ZONE_INIT(zone, name, size, number) do { \
@@ -981,11 +570,9 @@ typedef NPAGED_LOOKASIDE_LIST sctp_zone_t;
 #define	SCTP_ZONE_DESTROY(zone) do { \
 	ExDeleteNPagedLookasideList(&(zone)); \
 } while(0)
-#endif
 
-void *sctp_hashinit_flags(int elements, struct malloc_type *type, 
-                    u_long *hashmask, int flags);
-
+void *sctp_hashinit_flags(int, struct malloc_type *, u_long *, int);
+	
 #define HASH_NOWAIT 0x00000001
 #define HASH_WAITOK 0x00000002
 
@@ -995,6 +582,8 @@ void *sctp_hashinit_flags(int elements, struct malloc_type *type,
 #else
 #define SCTP_HASH_FREE(table, hashmark)
 #endif
+
+#define SCTP_M_COPYM	m_copym
 
 
 /*
@@ -1019,14 +608,13 @@ VOID CustomTimerDpc(IN struct _KDPC *, IN PVOID, IN PVOID, IN PVOID);
 #define SCTP_OS_TIMER_INIT(_tmr)
 
 #define SCTP_OS_TIMER_START(_tmr, _ticks, _func, _arg) do { \
+	DbgPrint("SCTP_OS_TIMER_START: tmr=%p,active=%d,pending=%d,on=%d %s[%d]\n", (_tmr), (_tmr)->active, (_tmr)->pending, KeReadStateTimer(&(_tmr)->tmr), __FILE__, __LINE__); \
 	if ((_tmr)->initialized == FALSE) { \
 		(_tmr)->func = (_func); \
 		(_tmr)->arg = (_arg); \
 		KeInitializeDpc(&(_tmr)->dpc, CustomTimerDpc, (_tmr)); \
 		KeInitializeTimer(&(_tmr)->tmr); \
 		(_tmr)->initialized = TRUE; \
-	} else if (KeReadStateTimer(&(_tmr)->tmr) == TRUE) { \
-		KeCancelTimer(&(_tmr)->tmr); \
 	} \
 	(_tmr)->ticks = (_ticks); \
 	(_tmr)->pending = TRUE; \
@@ -1039,9 +627,8 @@ VOID CustomTimerDpc(IN struct _KDPC *, IN PVOID, IN PVOID, IN PVOID);
 } while (0)
 
 #define SCTP_OS_TIMER_STOP(_tmr) do { \
-	if (KeReadStateTimer(&(_tmr)->tmr) == TRUE) { \
-		KeCancelTimer(&(_tmr)->tmr); \
-	} \
+	DbgPrint("SCTP_OS_TIMER_STOP: tmr=%p,active=%d,pending=%d,on=%d %s[%d]\n", (_tmr), (_tmr)->active, (_tmr)->pending, KeReadStateTimer(&(_tmr)->tmr), __FILE__, __LINE__); \
+	DbgPrint("KeCancelTimer=%d\n", KeCancelTimer(&(_tmr)->tmr)); \
 	(_tmr)->pending = FALSE; \
 } while (0)
 
@@ -1134,6 +721,13 @@ timevalsub(struct timeval *t1, const struct timeval *t2)
 #define SCTP_CLEAR_SO_NBIO(so)	((so)->so_state &= ~SS_NBIO)
 /* get the socket type */
 #define SCTP_SO_TYPE(so)	((so)->so_type)
+/* reserve sb space for a socket */
+#define SCTP_SORESERVE(so, send, recv)	soreserve(so, send, recv)
+/* clear the socket buffer state */
+#define SCTP_SB_CLEAR(sb)	\
+	(sb).sb_cc = 0;		\
+	(sb).sb_mb = NULL;	\
+	(sb).sb_mbcnt = 0;
 
 /*
  * SCTP AUTH

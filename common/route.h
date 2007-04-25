@@ -26,6 +26,8 @@ struct rtentry {
 	KMUTEX rt_mtx;
 };
 #define	RT_FLAG_UP	0x0001
+#define	RT_FLAG_HOST	0x0002
+#define	RT_FLAG_GATEWAY	0x0004
 
 #define	RT_LOCK_INIT(rt) do { \
 	if (LOCKDEBUG) { \

@@ -33,7 +33,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_peeloff.c,v 1.4 2007/02/12 23:24:31 rrs Exp $");
+__FBSDID("$FreeBSD: src/sys/netinet/sctp_peeloff.c,v 1.6 2007/04/14 09:44:09 rrs Exp $");
 #endif
 #include <netinet/sctp_os.h>
 #include <netinet/sctp_pcb.h>
@@ -109,6 +109,11 @@ sctp_do_peeloff(struct socket *head, struct socket *so, sctp_assoc_t assoc_id)
 	return (0);
 }
 
+#if defined( __Panda__)
+/* Need a function to remove the asoc found from socket */
+void panda_remove_from_sockbuf(struct socket *head);
+#endif
+
 struct socket *
 sctp_get_peeloff(struct socket *head, sctp_assoc_t assoc_id, int *error)
 {
@@ -134,9 +139,12 @@ sctp_get_peeloff(struct socket *head, sctp_assoc_t assoc_id, int *error)
 	}
 	newso = sonewconn(head, SS_ISCONNECTED
 #if defined(__APPLE__) && !defined(SCTP_APPLE_PANTHER)
-	    ,NULL
+	    , NULL
+#elif defined(__Panda__)
+	    /* place this socket in the assoc's vrf id */
+	    , NULL, stcb->asoc.vrf_id
 #endif
-	    );
+		);
 	if (newso == NULL) {
 #ifdef SCTP_DEBUG
 		if (sctp_debug_on & SCTP_DEBUG_PEEL1) {
@@ -149,11 +157,11 @@ sctp_get_peeloff(struct socket *head, sctp_assoc_t assoc_id, int *error)
 #ifndef SCTP_PER_SOCKET_LOCKING
 	}
 #else
-	} else {
+        } else {
 		SCTP_SOCKET_LOCK(newso, 1);
 	}
 #endif
-	n_inp = (struct sctp_inpcb *)newso->so_pcb;
+        n_inp = (struct sctp_inpcb *)newso->so_pcb;
 	SOCK_LOCK(head);
 	SCTP_INP_WLOCK(inp);
 	SCTP_INP_WLOCK(n_inp);
@@ -188,8 +196,9 @@ sctp_get_peeloff(struct socket *head, sctp_assoc_t assoc_id, int *error)
 	}
 	/* Turn off any non-blocking semantic. */
 	SCTP_CLEAR_SO_NBIO(newso);
-	newso->so_state |= SS_ISCONNECTED;
+        newso->so_state |= SS_ISCONNECTED;
 	/* We remove it right away */
+
 #if defined(__FreeBSD__) || defined(__APPLE__)
 #ifdef SCTP_LOCK_LOGGING
 	sctp_log_lock(inp, (struct sctp_tcb *)NULL, SCTP_LOG_LOCK_SOCK);
@@ -197,27 +206,17 @@ sctp_get_peeloff(struct socket *head, sctp_assoc_t assoc_id, int *error)
 	TAILQ_REMOVE(&head->so_comp, newso, so_list);
 	head->so_qlen--;
 	SOCK_UNLOCK(head);
-#else
-
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	newso = TAILQ_FIRST(&head->so_q);
-#else
-	newso = head->so_q;
-#endif
+#elif defined ( __Panda__)
+        panda_remove_from_sockbuf(head);
+#else  /* Netbsd/OpenBSD */
+        newso = TAILQ_FIRST(&head->so_q);
 	if (soqremque(newso, 1) == 0) {
-#ifdef INVARIANTS
-		panic("sctp_peeloff");
-#else
 		printf("soremque failed, peeloff-fails (invarients would panic)\n");
-		SCTP_INP_WUNLOCK(inp);
-		SCTP_INP_WUNLOCK(n_inp);
-		SCTP_TCB_UNLOCK(stcb);
 		*error = ENOTCONN;
 		return (NULL);
 
-#endif
 	}
-#endif				/* __FreeBSD__ */
+#endif
 	/*
 	 * Now we must move it from one hash table to another and get the
 	 * stcb in the right place.

@@ -32,7 +32,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_pcb.h,v 1.5 2007/01/18 09:58:43 rrs Exp $");
+__FBSDID("$FreeBSD: src/sys/netinet/sctp_pcb.h,v 1.12 2007/04/22 12:12:38 rrs Exp $");
 #endif
 
 #ifndef __sctp_pcb_h__
@@ -55,71 +55,17 @@ TAILQ_HEAD(sctp_streamhead, sctp_stream_queue_pending);
 #include <netinet/sctp_structs.h>
 #include <netinet/sctp_uio.h>
 #include <netinet/sctp_auth.h>
-#if 0
-#include <netinet/sctp_bsd_addr.h>
-#endif
-
-/*
- * PCB flags (in sctp_flags bitmask)
- */
-#define SCTP_PCB_FLAGS_UDPTYPE		0x00000001
-#define SCTP_PCB_FLAGS_TCPTYPE		0x00000002
-#define SCTP_PCB_FLAGS_BOUNDALL		0x00000004
-#define SCTP_PCB_FLAGS_ACCEPTING	0x00000008
-#define SCTP_PCB_FLAGS_UNBOUND		0x00000010
-#define SCTP_PCB_FLAGS_CLOSE_IP         0x00040000
-#define SCTP_PCB_FLAGS_WAS_CONNECTED    0x00080000
-#define SCTP_PCB_FLAGS_WAS_ABORTED      0x00100000
-/* TCP model support */
-
-#define SCTP_PCB_FLAGS_CONNECTED	0x00200000
-#define SCTP_PCB_FLAGS_IN_TCPPOOL	0x00400000
-#define SCTP_PCB_FLAGS_DONT_WAKE	0x00800000
-#define SCTP_PCB_FLAGS_WAKEOUTPUT	0x01000000
-#define SCTP_PCB_FLAGS_WAKEINPUT	0x02000000
-#define SCTP_PCB_FLAGS_BOUND_V6		0x04000000
-#define SCTP_PCB_FLAGS_NEEDS_MAPPED_V4	0x08000000
-#define SCTP_PCB_FLAGS_BLOCKING_IO	0x10000000
-#define SCTP_PCB_FLAGS_SOCKET_GONE	0x20000000
-#define SCTP_PCB_FLAGS_SOCKET_ALLGONE	0x40000000
-#define SCTP_PCB_FLAGS_V6_ONLY		0x80000000
-/* flags to copy to new PCB */
-#define SCTP_PCB_COPY_FLAGS		0x0e000004
-
-
-/*
- * PCB Features (in sctp_features bitmask)
- */
-#define SCTP_PCB_FLAGS_EXT_RCVINFO      0x00000004
-#define SCTP_PCB_FLAGS_DONOT_HEARTBEAT  0x00000008
-#define SCTP_PCB_FLAGS_FRAG_INTERLEAVE  0x00000010
-#define SCTP_PCB_FLAGS_DO_ASCONF	0x00000020
-#define SCTP_PCB_FLAGS_AUTO_ASCONF	0x00000040
-/* socket options */
-#define SCTP_PCB_FLAGS_NODELAY		0x00000100
-#define SCTP_PCB_FLAGS_AUTOCLOSE	0x00000200
-#define SCTP_PCB_FLAGS_RECVDATAIOEVNT	0x00000400
-#define SCTP_PCB_FLAGS_RECVASSOCEVNT	0x00000800
-#define SCTP_PCB_FLAGS_RECVPADDREVNT	0x00001000
-#define SCTP_PCB_FLAGS_RECVPEERERR	0x00002000
-#define SCTP_PCB_FLAGS_RECVSENDFAILEVNT	0x00004000
-#define SCTP_PCB_FLAGS_RECVSHUTDOWNEVNT	0x00008000
-#define SCTP_PCB_FLAGS_ADAPTATIONEVNT	0x00010000
-#define SCTP_PCB_FLAGS_PDAPIEVNT	0x00020000
-#define SCTP_PCB_FLAGS_AUTHEVNT		0x00040000
-#define SCTP_PCB_FLAGS_STREAM_RESETEVNT 0x00080000
-#define SCTP_PCB_FLAGS_NO_FRAGMENT	0x00100000
-#define SCTP_PCB_FLAGS_EXPLICIT_EOR     0x00200000
-
 
 #define SCTP_PCBHASH_ALLADDR(port, mask) (port & mask)
 #define SCTP_PCBHASH_ASOC(tag, mask) (tag & mask)
 
 struct sctp_vrf {
 	LIST_ENTRY (sctp_vrf) next_vrf;
+	struct sctp_ifalist *vrf_addr_hash;
 	struct sctp_ifnlist ifnlist;
 	uint32_t vrf_id;
 	uint32_t total_ifa_count;
+	u_long   vrf_hashmark;
 };
 
 struct sctp_ifn {
@@ -148,6 +94,7 @@ struct sctp_ifn {
 
 struct sctp_ifa {
 	LIST_ENTRY(sctp_ifa) next_ifa;
+	LIST_ENTRY(sctp_ifa) next_bucket;
 	struct sctp_ifn *ifn_p;	/* back pointer to parent ifn */
 	void    *ifa;		/* pointer to ifa, needed for flag
 				 * update for that we MUST lock
@@ -158,15 +105,12 @@ struct sctp_ifa {
 	struct ip_addr ip_addr;	/* internal address format */
 #endif
 	uint32_t refcount;	/* number of folks refering to this */
-#if defined(__Windows__)
-	KMUTEX mtx;
-#endif
  	uint32_t flags;
 	uint32_t localifa_flags;
 	uint8_t src_is_loop;
 	uint8_t src_is_priv;
 	uint8_t src_is_glob;
-	uint8_t resv;
+	uint8_t in_ifa_list;
 };
 
 struct sctp_laddr {
@@ -201,7 +145,7 @@ struct sctp_epinfo {
 
 	struct sctpasochead *sctp_restarthash;
 	u_long hashrestartmark;
-	/*
+	/*-
 	 * The TCP model represents a substantial overhead in that we get an
 	 * additional hash table to keep explicit connections in. The
 	 * listening TCP endpoint will exist in the usual ephash above and
@@ -270,10 +214,10 @@ struct sctp_epinfo {
 	void *logging_mtx;
 #endif /* _KERN_LOCKS_H_ */
 #elif defined(__Windows__)
-	KMUTEX ipi_ep_mtx;
-	KMUTEX it_mtx;
-	KMUTEX ipi_iterator_wq_mtx;
-	KMUTEX ipi_addr_mtx;
+	KSPIN_LOCK ipi_ep_lock;
+	KSPIN_LOCK it_lock;
+	KSPIN_LOCK ipi_iterator_wq_lock;
+	KSPIN_LOCK ipi_addr_lock;
 #endif
 	uint32_t ipi_count_ep;
 
@@ -316,8 +260,7 @@ struct sctp_epinfo {
 #endif
 };
 
-extern struct sctpstat sctpstat;
-/*
+/*-
  * Here we have all the relevant information for each SCTP entity created. We
  * will need to modify this as approprate. We also need to figure out how to
  * access /dev/random.
@@ -389,7 +332,7 @@ struct sctp_pcb {
 #define sctp_lport ip_inp.inp.inp_lport
 
 struct sctp_inpcb {
-	/*
+	/*-
 	 * put an inpcb in front of it all, kind of a waste but we need to
 	 * for compatability with all the other stuff.
 	 */
@@ -436,7 +379,8 @@ struct sctp_inpcb {
 	uint32_t partial_delivery_point;
 	uint32_t sctp_context;
 	struct sctp_sndrcvinfo def_send;
-	/* These three are here for the sosend_dgram
+	/*-
+	 * These three are here for the sosend_dgram
 	 * (pkt, pkt_last and control).
 	 * routine. However, I don't think anyone in
 	 * the current FreeBSD kernel calls this. So
@@ -468,9 +412,9 @@ struct sctp_inpcb {
 	pthread_mutex_t inp_rdata_mtx;
 	int32_t refcount;
 #elif defined(__Windows__)
-	KMUTEX inp_mtx;
-	KMUTEX inp_create_mtx;
-	KMUTEX inp_rdata_mtx;
+	KSPIN_LOCK inp_lock;
+	KSPIN_LOCK inp_create_lock;
+	KSPIN_LOCK inp_rdata_lock;
 	int32_t refcount;
 #endif
 #if defined(SCTP_APPLE_FINE_GRAINED_LOCKING)
@@ -493,6 +437,12 @@ struct sctp_inpcb {
 	uint32_t i_am_here_file;
 	uint32_t i_am_here_line;
 #endif
+	uint32_t def_vrf_id;
+#ifdef SCTP_MVRF
+	uint32_t *m_vrf_ids;
+	uint32_t num_vrfs;
+	uint32_t vrf_size;
+#endif
 	uint32_t total_sends;
 	uint32_t total_recvs;
 	uint32_t last_abort_code;
@@ -512,7 +462,7 @@ struct sctp_tcb {
 	struct sctp_block_entry *block_entry;	/* pointer locked by  socket
 						 * send buffer */
 	struct sctp_association asoc;
-	/*
+	/*-
 	 * freed_by_sorcv_sincelast is protected by the sockbuf_lock NOT the
 	 * tcb_lock. Its special in this way to help avoid extra mutex calls
 	 * in the reading of data.
@@ -530,8 +480,8 @@ struct sctp_tcb {
 	pthread_mutex_t tcb_mtx;
 	pthread_mutex_t tcb_send_mtx;
 #elif defined(__Windows__)
-	KMUTEX tcb_mtx;
-	KMUTEX tcb_send_mtx;
+	KSPIN_LOCK tcb_lock;
+	KSPIN_LOCK tcb_send_lock;
 #endif
 };
 
@@ -559,14 +509,12 @@ struct sctp_tcb {
 /*
  * Pre-5.x FreeBSD, NetBSD and others.
  */
-
 #include <netinet/sctp_lock_empty.h>
 #endif
 
 #if defined(_KERNEL)
 
 extern struct sctp_epinfo sctppcbinfo;
-extern int sctp_auto_asconf;
 
 int SCTP6_ARE_ADDR_EQUAL(struct in6_addr *a, struct in6_addr *b);
 
@@ -596,12 +544,11 @@ sctp_del_addr_from_vrf(uint32_t vrfid, struct sockaddr *addr,
 
 struct sctp_nets *sctp_findnet(struct sctp_tcb *, struct sockaddr *);
 
-struct sctp_inpcb *sctp_pcb_findep(struct sockaddr *, int, int);
+struct sctp_inpcb *sctp_pcb_findep(struct sockaddr *, int, int, uint32_t);
 
 #if defined(__FreeBSD__) && __FreeBSD_version >= 500000
 int sctp_inpcb_bind(struct socket *, struct sockaddr *, struct thread *);
-#elif defined(__Windows__)
-int sctp_inpcb_bind(struct socket *, struct sockaddr *);
+
 #else
 int sctp_inpcb_bind(struct socket *, struct sockaddr *, struct proc *);
 
@@ -610,17 +557,17 @@ int sctp_inpcb_bind(struct socket *, struct sockaddr *, struct proc *);
 struct sctp_tcb *
 sctp_findassociation_addr(struct mbuf *, int, int,
     struct sctphdr *, struct sctp_chunkhdr *, struct sctp_inpcb **,
-    struct sctp_nets **);
+    struct sctp_nets **, uint32_t vrf_id);
 
 struct sctp_tcb *
 sctp_findassociation_addr_sa(struct sockaddr *,
-    struct sockaddr *, struct sctp_inpcb **, struct sctp_nets **, int);
+    struct sockaddr *, struct sctp_inpcb **, struct sctp_nets **, int, uint32_t);
 
 void
 sctp_move_pcb_and_assoc(struct sctp_inpcb *, struct sctp_inpcb *,
     struct sctp_tcb *);
 
-/*
+/*-
  * For this call ep_addr, the to is the destination endpoint address of the
  * peer (relative to outbound). The from field is only used if the TCP model
  * is enabled and helps distingush amongst the subset bound (non-boundall).
@@ -693,7 +640,7 @@ int sctp_is_vtag_good(struct sctp_inpcb *, uint32_t, struct timeval *);
 
 int sctp_destination_is_reachable(struct sctp_tcb *, struct sockaddr *);
 
-/*
+/*-
  * Null in last arg inpcb indicate run on ALL ep's. Specific inp in last arg
  * indicates run on ONLY assoc's of the specified endpoint.
  */
@@ -707,18 +654,6 @@ sctp_initiate_iterator(inp_func inpf,
 		       end_func ef, 
 		       struct sctp_inpcb *, 
 		       uint8_t co_off);
-
-#if defined(SCTP_USE_THREAD_BASED_ITERATOR)
-void sctp_wakeup_iterator(void);
-
-void sctp_startup_iterator(void);
-#endif
-
-
-#ifdef __NetBSD__
-extern void in6_sin6_2_sin(struct sockaddr_in *, struct sockaddr_in6 *sin6);
-
-#endif
 
 #endif				/* _KERNEL */
 #endif				/* !__sctp_pcb_h__ */

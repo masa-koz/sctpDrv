@@ -31,7 +31,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp.h,v 1.1 2006/11/03 15:23:15 rrs Exp $");
+__FBSDID("$FreeBSD: src/sys/netinet/sctp.h,v 1.4 2007/04/22 12:12:38 rrs Exp $");
 #endif
 
 #ifndef _NETINET_SCTP_H_
@@ -167,6 +167,39 @@ struct sctp_paramhdr {
  */
 #define SCTP_SET_DYNAMIC_PRIMARY        0x00002001
 
+/* VRF (virtual router feature) and multi-VRF support 
+ * options. VRF's provide splits within a router
+ * that give the views of multiple routers. A
+ * standard host, without VRF support, is just
+ * a single VRF. If VRF's are supported then 
+ * the transport must be VRF aware. This means
+ * that every socket call coming in must be directed
+ * within the endpoint to one of the VRF's it belongs
+ * to. The endpoint, before binding, may select
+ * the "default" VRF it is in by using a set socket 
+ * option with SCTP_VRF_ID. This will also
+ * get propegated to the default VRF. Once the
+ * endpoint binds an address then it CANNOT add
+ * additional VRF's to become a Multi-VRF endpoint.
+ *
+ * Before BINDING additional VRF's can be added with
+ * the SCTP_ADD_VRF_ID call or deleted with
+ * SCTP_DEL_VRF_ID.
+ *
+ * Associations are ALWAYS contained inside a single
+ * VRF. They cannot reside in two (or more) VRF's. Incoming
+ * packets, assuming the router is VRF aware, can always
+ * tell us what VRF they arrived on. A host not supporting
+ * any VRF's will find that the packets always arrived on the
+ * single VRF that the host has. 
+ *
+ */
+
+#define SCTP_VRF_ID			0x00003001
+#define SCTP_ADD_VRF_ID			0x00003002
+#define SCTP_GET_VRF_IDS		0x00003003
+#define SCTP_GET_ASOC_VRF               0x00003004
+#define SCTP_DEL_VRF_ID                 0x00003005
 /*
  * hidden implementation specific options these are NOT user visible (should
  * move out of sctp.h)
@@ -194,6 +227,15 @@ struct sctp_paramhdr {
 #define SCTP_LISTEN_FIX			0x0000800c
 /* Debug things that need to be purged */
 #define SCTP_SET_INITIAL_DBG_SEQ	0x00009f00
+
+
+/* fragment interleave constants 
+ * setting must be one of these or
+ * EINVAL returned.
+ */
+#define SCTP_FRAG_LEVEL_0    0x00000000
+#define SCTP_FRAG_LEVEL_1    0x00000001
+#define SCTP_FRAG_LEVEL_2    0x00000002
 
 /*
  * user state values
@@ -352,6 +394,60 @@ struct sctp_error_unrecognized_chunk {
 
 /* CMT DAC algorithm SACK flag */
 #define SCTP_SACK_CMT_DAC       0x80
+
+/*
+ * PCB flags (in sctp_flags bitmask).
+ * Note the features and flags are meant
+ * for use by netstat.
+ */
+#define SCTP_PCB_FLAGS_UDPTYPE		0x00000001
+#define SCTP_PCB_FLAGS_TCPTYPE		0x00000002
+#define SCTP_PCB_FLAGS_BOUNDALL		0x00000004
+#define SCTP_PCB_FLAGS_ACCEPTING	0x00000008
+#define SCTP_PCB_FLAGS_UNBOUND		0x00000010
+#define SCTP_PCB_FLAGS_CLOSE_IP         0x00040000
+#define SCTP_PCB_FLAGS_WAS_CONNECTED    0x00080000
+#define SCTP_PCB_FLAGS_WAS_ABORTED      0x00100000
+/* TCP model support */
+
+#define SCTP_PCB_FLAGS_CONNECTED	0x00200000
+#define SCTP_PCB_FLAGS_IN_TCPPOOL	0x00400000
+#define SCTP_PCB_FLAGS_DONT_WAKE	0x00800000
+#define SCTP_PCB_FLAGS_WAKEOUTPUT	0x01000000
+#define SCTP_PCB_FLAGS_WAKEINPUT	0x02000000
+#define SCTP_PCB_FLAGS_BOUND_V6		0x04000000
+#define SCTP_PCB_FLAGS_NEEDS_MAPPED_V4	0x08000000
+#define SCTP_PCB_FLAGS_BLOCKING_IO	0x10000000
+#define SCTP_PCB_FLAGS_SOCKET_GONE	0x20000000
+#define SCTP_PCB_FLAGS_SOCKET_ALLGONE	0x40000000
+/* flags to copy to new PCB */
+#define SCTP_PCB_COPY_FLAGS		0x0e000004
+
+
+/*
+ * PCB Features (in sctp_features bitmask)
+ */
+#define SCTP_PCB_FLAGS_EXT_RCVINFO      0x00000002
+#define SCTP_PCB_FLAGS_DONOT_HEARTBEAT  0x00000004
+#define SCTP_PCB_FLAGS_FRAG_INTERLEAVE  0x00000008
+#define SCTP_PCB_FLAGS_INTERLEAVE_STRMS	0x00000010
+#define SCTP_PCB_FLAGS_DO_ASCONF	0x00000020
+#define SCTP_PCB_FLAGS_AUTO_ASCONF	0x00000040
+/* socket options */
+#define SCTP_PCB_FLAGS_NODELAY		0x00000100
+#define SCTP_PCB_FLAGS_AUTOCLOSE	0x00000200
+#define SCTP_PCB_FLAGS_RECVDATAIOEVNT	0x00000400
+#define SCTP_PCB_FLAGS_RECVASSOCEVNT	0x00000800
+#define SCTP_PCB_FLAGS_RECVPADDREVNT	0x00001000
+#define SCTP_PCB_FLAGS_RECVPEERERR	0x00002000
+#define SCTP_PCB_FLAGS_RECVSENDFAILEVNT	0x00004000
+#define SCTP_PCB_FLAGS_RECVSHUTDOWNEVNT	0x00008000
+#define SCTP_PCB_FLAGS_ADAPTATIONEVNT	0x00010000
+#define SCTP_PCB_FLAGS_PDAPIEVNT	0x00020000
+#define SCTP_PCB_FLAGS_AUTHEVNT		0x00040000
+#define SCTP_PCB_FLAGS_STREAM_RESETEVNT 0x00080000
+#define SCTP_PCB_FLAGS_NO_FRAGMENT	0x00100000
+#define SCTP_PCB_FLAGS_EXPLICIT_EOR     0x00400000
 
 #include <netinet/sctp_uio.h>
 

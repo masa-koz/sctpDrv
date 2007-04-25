@@ -32,7 +32,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_output.h,v 1.2 2007/01/18 09:58:43 rrs Exp $");
+__FBSDID("$FreeBSD: src/sys/netinet/sctp_output.h,v 1.4 2007/04/03 11:15:32 rrs Exp $");
 #endif
 
 #ifndef __sctp_output_h__
@@ -73,7 +73,7 @@ sctp_is_addr_in_ep(struct sctp_inpcb *inp, struct sctp_ifa *ifa);
 struct sctp_ifa *
 sctp_source_address_selection(struct sctp_inpcb *inp,
 			      struct sctp_tcb *stcb, 
-			      struct route *ro, struct sctp_nets *net,
+			      sctp_route_t *ro, struct sctp_nets *net,
 			      int non_asoc_addr_ok, uint32_t vrf_id);
 
 
@@ -123,9 +123,7 @@ void sctp_fix_ecn_echo(struct sctp_association *);
 int
 sctp_output(struct sctp_inpcb *, struct mbuf *, struct sockaddr *,
     struct mbuf *, struct thread *, int);
-#elif defined(__Windows__)
-sctp_output(struct sctp_inpcb *, struct mpkt *, struct sockaddr *,
-    struct mbuf *, int);
+
 #else
 int
 sctp_output(struct sctp_inpcb *, struct mbuf *, struct sockaddr *,
@@ -204,9 +202,14 @@ sctp_sosend(struct socket *so,
     struct sockaddr *addr,
 #endif
     struct uio *uio,
+#ifdef __Panda__
+    pakhandle_type top,
+    pakhandle_type control,
+#else
     struct mbuf *top,
     struct mbuf *control,
-#if defined(__NetBSD__) || defined(__APPLE__) || defined(__Windows__)
+#endif
+#if defined(__NetBSD__) || defined(__APPLE__) || defined(__Panda__)
     int flags
 #else
     int flags,
