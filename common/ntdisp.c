@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntdisp.c,v 1.5 2007/04/25 11:44:56 kozuka Exp $
+ * $Id: ntdisp.c,v 1.6 2007/04/26 05:22:08 kozuka Exp $
  */
 #include "globals.h"
 
@@ -63,6 +63,7 @@ NTSTATUS SCTPAccept(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPConnect(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPReceiveDatagram(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPSendDatagram(IN PIRP, IN PIO_STACK_LOCATION);
+NTSTATUS SCTPSetEventHandler(IN PIRP, IN PIO_STACK_LOCATION);
 VOID SCTPCleanupComplete(PVOID, NTSTATUS, unsigned int);
 
 void SCTPAbortAndIndicateDisconnect(IN CONNECTION_CONTEXT);
@@ -81,6 +82,7 @@ NTSTATUS TdiReceiveDatagramCommon(IN struct socket *, IN PSCTP_DGRCV_REQUEST, OU
 void TdiCancelReceiveDatagram(IN HANDLE, IN PVOID);
 NTSTATUS TdiSendDatagram(IN PTDI_REQUEST, IN PTDI_CONNECTION_INFORMATION, IN ULONG, OUT ULONG *, IN PNDIS_BUFFER);
 void TdiCancelSendDatagram(IN HANDLE, IN PVOID);
+NTSTATUS TdiSetEvent(IN HANDLE, IN int, IN PVOID, IN PVOID);
 
 extern PDEVICE_OBJECT SctpTcpDeviceObject;
 extern PDEVICE_OBJECT SctpUdpDeviceObject;
@@ -478,6 +480,10 @@ SCTPDispatchInternalDeviceControl(
 			status = SCTPSendDatagram(irp, irpSp);
 			DbgPrint("SCTPDispatchInternalDeviceControl: leave #6\n");
 			return status;
+		case TDI_SET_EVENT_HANDLER:
+			status = SCTPSetEventHandler(irp, irpSp);
+			DbgPrint("SCTPDispatchInternalDeviceControl: leave #7\n");
+			return status;
 		default:
 			break;
 		}
@@ -736,6 +742,26 @@ SCTPSendDatagram(
 	return STATUS_PENDING;
 }
 
+NTSTATUS
+SCTPSetEventHandler(
+    IN PIRP irp,
+    IN PIO_STACK_LOCATION irpSp)
+{
+	NTSTATUS status;
+	PSCTP_CONTEXT sctpContext;
+	PTDI_REQUEST_KERNEL_SET_EVENT event;
+
+	sctpContext = (PSCTP_CONTEXT)irpSp->FileObject->FsContext;
+	event = (PTDI_REQUEST_KERNEL_SET_EVENT)&(irpSp->Parameters);
+
+	status = TdiSetEvent(sctpContext->Handle.AddressHandle,
+	    event->EventType,
+	    event->EventHandler,
+	    event->EventContext);
+
+	return status;
+}
+
 void
 SCTPAbortAndIndicateDisconnect(
     IN CONNECTION_CONTEXT connectionContext)
@@ -956,7 +982,8 @@ TdiReceiveDatagramCommon(
 	struct mbuf *control = NULL;
 	struct sockaddr *from = NULL;
 	int flags;
-	PTA_IP_ADDRESS taAddr;
+	PTA_IP_ADDRESS taIpAddr;
+	PTA_IP6_ADDRESS taIp6Addr;
 	int error = 0;
 
 	DbgPrint("TdiReceiveDatagramCommon: leave\n");
@@ -974,33 +1001,53 @@ TdiReceiveDatagramCommon(
 	}
 
 	if (error == 0) {
-		if (from != NULL) {
-			if (from->sa_family == AF_INET &&
-			    drr->drr_conninfo != NULL &&
-			    drr->drr_conninfo->RemoteAddressLength >= sizeof(TA_IP_ADDRESS)) {
-				taAddr = (PTA_IP_ADDRESS)drr->drr_conninfo->RemoteAddress;
-				taAddr->TAAddressCount = 1;
-				drr->drr_conninfo->RemoteAddressLength = taAddr->Address[0].AddressLength =
-				    sizeof(TA_IP_ADDRESS);
-				taAddr->Address[0].AddressType = TDI_ADDRESS_TYPE_IP;
-				taAddr->Address[0].Address[0].sin_port = ((struct sockaddr_in *)from)->sin_port;
-				taAddr->Address[0].Address[0].in_addr = ((struct sockaddr_in *)from)->sin_addr.s_addr;
-			}
-			ExFreePool(from);
+		if (from != NULL &&
+		    from->sa_family == AF_INET &&
+		    drr->drr_conninfo != NULL &&
+		    drr->drr_conninfo->RemoteAddressLength >= sizeof(TA_IP_ADDRESS)) {
+			taIpAddr = (PTA_IP_ADDRESS)drr->drr_conninfo->RemoteAddress;
+			taIpAddr->TAAddressCount = 1;
+			drr->drr_conninfo->RemoteAddressLength = taIpAddr->Address[0].AddressLength =
+			    sizeof(TA_IP6_ADDRESS);
+			taIpAddr->Address[0].AddressType = TDI_ADDRESS_TYPE_IP;
+			taIpAddr->Address[0].Address[0].sin_port = ((struct sockaddr_in *)from)->sin_port;
+			taIpAddr->Address[0].Address[0].in_addr = ((struct sockaddr_in *)from)->sin_addr.s_addr;
+		} else if (
+		    from != NULL &&
+		    from->sa_family == AF_INET6 &&
+		    drr->drr_conninfo != NULL &&
+		    drr->drr_conninfo->RemoteAddressLength >= sizeof(TA_IP6_ADDRESS)) {
+			taIp6Addr = (PTA_IP6_ADDRESS)drr->drr_conninfo->RemoteAddress;
+			taIp6Addr->TAAddressCount = 1;
+			drr->drr_conninfo->RemoteAddressLength = taIp6Addr->Address[0].AddressLength =
+			    sizeof(TA_IP6_ADDRESS);
+			taIp6Addr->Address[0].AddressType = TDI_ADDRESS_TYPE_IP6;
+			taIp6Addr->Address[0].Address[0].sin6_port = ((struct sockaddr_in6 *)from)->sin6_port;
+			RtlCopyMemory(&taIp6Addr->Address[0].Address[0].sin6_addr,
+			    &((struct sockaddr_in6 *)from)->sin6_addr, sizeof(struct in6_addr));
+			taIp6Addr->Address[0].Address[0].sin6_scope_id = ((struct sockaddr_in6 *)from)->sin6_scope_id;
 		}
-		if (control != NULL) {
-			if (drr->drr_conninfo != NULL &&
-			    drr->drr_conninfo->OptionsLength >= SCTP_BUF_LEN(control)) {
-				RtlCopyMemory(drr->drr_conninfo->Options, SCTP_BUF_AT(control, 0),
-				    SCTP_BUF_LEN(control));
-				drr->drr_conninfo->OptionsLength = SCTP_BUF_LEN(control);
-			}
-			m_freem(control);
+
+		if (control != NULL &&
+		    drr->drr_conninfo != NULL &&
+		    drr->drr_conninfo->OptionsLength >= SCTP_BUF_LEN(control)) {
+			RtlCopyMemory(drr->drr_conninfo->Options, SCTP_BUF_AT(control, 0),
+			    SCTP_BUF_LEN(control));
+			drr->drr_conninfo->OptionsLength = SCTP_BUF_LEN(control);
 		}
+
 		if (receivedLength != NULL) {
 			*receivedLength = (ULONG)uio.uio_offset;
 		} else {
 			(*(drr->drr_complete))(drr->drr_context, STATUS_SUCCESS, (ULONG)uio.uio_offset);
+		}
+
+		if (from != NULL) {
+			ExFreePool(from);
+		}
+
+		if (control != NULL) {
+			m_freem(control);
 		}
 		DbgPrint("TdiReceiveDatagramCommon: leave #2\n");
 		return STATUS_SUCCESS;
@@ -1175,6 +1222,32 @@ TdiCancelSendDatagram(
 	DbgPrint("TdiCancelReceiveDatagram: leave\n");
 }
 
+NTSTATUS
+TdiSetEvent(
+    IN HANDLE addressHandle,
+    IN int type,
+    IN PVOID handler,
+    IN PVOID context)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	struct socket *so;
+
+	so = (struct socket *)addressHandle;
+
+	switch (type) {
+	case TDI_EVENT_RECEIVE_DATAGRAM:
+		so->so_rcvdg = handler;
+		so->so_rcvdgarg = context;
+		break;
+	default:
+		status = TDI_BAD_EVENT_TYPE;
+		break;
+	}
+
+	return status;
+}
+
+
 void
 sorwakeup_locked(
     struct socket *so)
@@ -1190,14 +1263,17 @@ sorwakeup_locked(
 
 	struct mbuf *m = NULL, *n;
 	TDI_STATUS rcvdgStatus;
-	unsigned int length, bytesTaken;
+	unsigned int bytesTaken, offset;
+	int length;
 
-	PTA_IP_ADDRESS taAddr;
-	PTA_IP6_ADDRESS ta6Addr;
+	PTRANSPORT_ADDRESS tAddr = NULL;
+	TA_IP_ADDRESS taIpAddr;
+	TA_IP6_ADDRESS taIp6Addr;
 
 	PIRP irp;
 	PIO_STACK_LOCATION irpSp;
 	PTDI_REQUEST_KERNEL_RECEIVEDG datagramInformation;
+	PTDI_CONNECTION_INFORMATION returnDatagramInformation;
 
 	DbgPrint("sorwakeup: enter\n");
 	while (
@@ -1218,47 +1294,100 @@ sorwakeup_locked(
 	if (so->so_rcv.sb_cc > 0 && so->so_rcvdg != NULL) {
 		while (so->so_rcv.sb_cc > 0) {
 			flags = MSG_DONTWAIT;
-			error = sctp_soreceive(so, &from, NULL, &m, NULL, &flags);
-			if (error != 0) {
+			error = sctp_soreceive(so, &from, NULL, &m, &control, &flags);
+			if (error == EWOULDBLOCK) {
 				break;
 			}
-			length = 0;
-			if (m != NULL) {
+			if (error == 0 && m != NULL) {
+				length = 0;
 				n = m;
 				while (n != NULL) {
 					length += SCTP_BUF_LEN(n);
 					n = SCTP_BUF_NEXT(n);
 				}
-			}
-			rcvdgStatus = (*(so->so_rcvdg))(so->so_rcvdgarg,
-			    from->sa_len,
-			    from,
-			    0,
-			    NULL,
-			    TDI_RECEIVE_COPY_LOOKAHEAD,
-			    SCTP_BUF_LEN(m),
-			    length,
-			    &bytesTaken,
-			    SCTP_BUF_AT(m, 0),
-			    &irp);
 
-			if (rcvdgStatus == TDI_MORE_PROCESSING) {
-				irpSp = IoGetCurrentIrpStackLocation(irp);
-				datagramInformation =
-				    (PTDI_REQUEST_KERNEL_RECEIVEDG)&irpSp->Parameters;
-
-				RtlZeroMemory(&uio, sizeof(uio));
-				uio.uio_buffer = irp->MdlAddress;
-				uio.uio_resid = datagramInformation->ReceiveLength;
-				uio.uio_rw = UIO_READ;
-				uiomove(SCTP_BUF_AT(m, bytesTaken), SCTP_BUF_LEN(m) - bytesTaken, &uio);
-				n = SCTP_BUF_NEXT(m);
-				while (n != NULL) {
-					uiomove(SCTP_BUF_AT(n, 0), SCTP_BUF_LEN(n), &uio);
-					n = SCTP_BUF_NEXT(n);
+				if (from != NULL &&
+				    from->sa_family == AF_INET) {
+					RtlZeroMemory(&taIpAddr, sizeof(taIpAddr));
+					taIpAddr.TAAddressCount = 1;
+					taIpAddr.Address[0].AddressLength = sizeof(TA_IP_ADDRESS);
+					taIpAddr.Address[0].AddressType = TDI_ADDRESS_TYPE_IP;
+					taIpAddr.Address[0].Address[0].sin_port =
+					    ((struct sockaddr_in *)from)->sin_port;
+					taIpAddr.Address[0].Address[0].in_addr =
+					    ((struct sockaddr_in *)from)->sin_addr.s_addr;
+					tAddr = (PTRANSPORT_ADDRESS)&taIpAddr;
+				} else if (
+				    from != NULL &&
+				    from->sa_family == AF_INET6) {
+					RtlZeroMemory(&taIp6Addr, sizeof(taIp6Addr));
+					taIp6Addr.TAAddressCount = 1;
+					taIp6Addr.Address[0].AddressLength = sizeof(TA_IP6_ADDRESS);
+					taIp6Addr.Address[0].AddressType = TDI_ADDRESS_TYPE_IP6;
+					taIp6Addr.Address[0].Address[0].sin6_port =
+					    ((struct sockaddr_in6 *)from)->sin6_port;
+					RtlCopyMemory(&taIp6Addr.Address[0].Address[0].sin6_addr,
+					    &((struct sockaddr_in6 *)from)->sin6_addr, sizeof(struct in6_addr));
+					taIp6Addr.Address[0].Address[0].sin6_scope_id =
+					    ((struct sockaddr_in6 *)from)->sin6_scope_id;
+					tAddr = (PTRANSPORT_ADDRESS)&taIp6Addr;
 				}
-				irp->IoStatus.Information = length - bytesTaken;
-				irp->IoStatus.Status = STATUS_SUCCESS;
+
+				rcvdgStatus = (*(so->so_rcvdg))(so->so_rcvdgarg,
+				    ((tAddr != NULL) ? ((PTA_ADDRESS)&tAddr->Address[0])->AddressLength : 0),
+				    tAddr,
+				    ((control != NULL) ? SCTP_BUF_LEN(control) : 0),
+				    ((control != NULL) ? SCTP_BUF_AT(control, 0) : NULL),
+				    ((length > SCTP_BUF_LEN(m)) ? TDI_RECEIVE_COPY_LOOKAHEAD : TDI_RECEIVE_ENTIRE_MESSAGE),
+				    SCTP_BUF_LEN(m),
+				    length,
+				    &bytesTaken,
+				    SCTP_BUF_AT(m, 0),
+				    &irp);
+
+				if (rcvdgStatus == TDI_MORE_PROCESSING) {
+					irpSp = IoGetCurrentIrpStackLocation(irp);
+					datagramInformation =
+					    (PTDI_REQUEST_KERNEL_RECEIVEDG)&irpSp->Parameters;
+
+					returnDatagramInformation = datagramInformation->ReturnDatagramInformation;
+
+					if (tAddr != NULL &&
+					    returnDatagramInformation != NULL &&
+					    returnDatagramInformation->RemoteAddressLength >= ((PTA_ADDRESS)&tAddr->Address[0])->AddressLength) {
+						RtlCopyMemory(returnDatagramInformation->RemoteAddress,
+						    tAddr, ((PTA_ADDRESS)&tAddr->Address[0])->AddressLength);
+						returnDatagramInformation->RemoteAddressLength = ((PTA_ADDRESS)&tAddr->Address[0])->AddressLength;
+					}
+
+					if (control != NULL &&
+					    returnDatagramInformation != NULL &&
+					    returnDatagramInformation->OptionsLength >= SCTP_BUF_LEN(control)) {
+						RtlCopyMemory(returnDatagramInformation->Options,
+						    SCTP_BUF_AT(control, 0),
+						    SCTP_BUF_LEN(control));
+					}
+					RtlZeroMemory(&uio, sizeof(uio));
+					uio.uio_buffer = irp->MdlAddress;
+					uio.uio_resid = datagramInformation->ReceiveLength;
+					uio.uio_rw = UIO_READ;
+					m = n;
+					offset = bytesTaken;
+					do {
+						uiomove(SCTP_BUF_AT(n, offset), SCTP_BUF_LEN(n) - offset, &uio);
+						offset = 0;
+						n = SCTP_BUF_NEXT(n);
+					} while ((n = SCTP_BUF_NEXT(n)) != NULL);
+					irp->IoStatus.Information = length - bytesTaken;
+					irp->IoStatus.Status = STATUS_SUCCESS;
+					IoCompleteRequest(irp, 2);
+				}
+			}
+			if (from != NULL) {
+				ExFreePool(from);
+			}
+			if (control != NULL) {
+				m_freem(control);
 			}
 		}
 	}

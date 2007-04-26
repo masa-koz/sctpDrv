@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: udp.c,v 1.1 2007/04/23 15:48:26 kozuka Exp $
+ * $Id: udp.c,v 1.2 2007/04/26 05:21:34 kozuka Exp $
  */
 #include <ntddk.h>
 #include <tdi.h>
@@ -54,10 +54,14 @@ ntohl(ULONG x)
 PFILE_OBJECT UdpObject;
 HANDLE UdpHandle;
 
+#ifndef EVENT
 struct ThreadCtx {
 	BOOLEAN bActive;
 	KEVENT event;
 } *ThrCtx;
+
+PFILE_OBJECT ThrObject;
+#endif
 
 #ifdef SCTP
 struct sctp_sndrcvinfo {
@@ -96,12 +100,15 @@ struct SndDgCtx {
 #endif
 };
 
-PFILE_OBJECT ThrObject;
 
 
 NTSTATUS DriverEntry(IN PDRIVER_OBJECT, IN PUNICODE_STRING);
 VOID Unload(IN PDRIVER_OBJECT);
+#ifdef EVENT
+NTSTATUS ReceiveDatagram(IN PVOID, IN LONG, IN PVOID, IN LONG, IN PVOID, IN ULONG, IN ULONG, IN ULONG, OUT ULONG *, IN PVOID, OUT PIRP *);
+#else
 VOID ReceiveDatagramThread(IN PVOID);
+#endif
 NTSTATUS ReceiveDatagramComp(IN PDEVICE_OBJECT, IN PIRP, IN PVOID);
 NTSTATUS SendDatagram(IN PUCHAR, IN ULONG, IN PIRP, IN struct SndDgCtx *, IN KEVENT);
 NTSTATUS SendDatagramComp(IN PDEVICE_OBJECT, IN PIRP, IN PVOID);
@@ -122,7 +129,12 @@ DriverEntry(
 	PTA_IP_ADDRESS ipAddress;
 	IO_STATUS_BLOCK statusBlock;
 
+#ifdef EVENT
+	PIRP irp;
+	PDEVICE_OBJECT deviceObject;
+#else
 	HANDLE thrHandle;
+#endif
 
 	DbgPrint("DriverEntry: start\n");
 
@@ -185,6 +197,29 @@ DriverEntry(
 		goto done;
 	}
 
+#ifdef EVENT
+	deviceObject = IoGetRelatedDeviceObject(UdpObject);
+	irp = TdiBuildInternalDeviceControlIrp(TDI_SET_EVENT_HANDLER,
+	    deviceObject,
+	    UdpObject,
+	    NULL,
+	    NULL);
+
+	TdiBuildSetEventHandler(irp,
+	    deviceObject,
+	    UdpObject,
+	    NULL,
+	    NULL,
+	    TDI_EVENT_RECEIVE_DATAGRAM,
+	    ReceiveDatagram,
+	    NULL);
+
+	status = IoCallDriver(deviceObject, irp);
+	if (status != STATUS_SUCCESS) {
+		DbgPrint("DriverEntry: IoCallDriver=%X\n", status);
+		Unload(driverObject);
+	}
+#else
 	ThrCtx = ExAllocatePool(NonPagedPool, sizeof(*ThrCtx));
 	KeInitializeEvent(&ThrCtx->event, SynchronizationEvent, FALSE);
 	ThrCtx->bActive = TRUE;
@@ -217,6 +252,7 @@ DriverEntry(
 		ExFreePool(ThrCtx);
 		Unload(driverObject);
 	}
+#endif
 done:
 	ExFreePool(eaInfo);
 	DbgPrint("DriverEntry: end\n");
@@ -231,6 +267,7 @@ Unload(
 	NTSTATUS status;
 
 	DbgPrint("Unload: start\n");
+#ifndef EVENT
 	if (ThrObject != NULL) {
 		ThrCtx->bActive = FALSE;
 		KeSetEvent(&ThrCtx->event, IO_NO_INCREMENT, FALSE);
@@ -242,6 +279,7 @@ Unload(
 		ObDereferenceObject(ThrObject);
 		ExFreePool(ThrCtx);
 	}
+#endif
 	if (UdpObject != NULL) {
 		ObDereferenceObject(UdpObject);
 	}
@@ -253,6 +291,79 @@ Unload(
 }
 
 
+#ifdef EVENT
+NTSTATUS
+ReceiveDatagram(
+    IN PVOID tdiEventContext,
+    IN LONG sourceAddressLength,
+    IN PVOID sourceAddress,
+    IN LONG optionsLength,
+    IN PVOID options,
+    IN ULONG receiveDatagramFlags,
+    IN ULONG bytesIndicated,
+    IN ULONG bytesAvailable,
+    OUT ULONG *bytesTaken,
+    IN PVOID tsdu,
+    OUT PIRP *ioRequestPacket)
+{
+	struct RcvDgCtx *rcvDgCtx = NULL;
+	struct SndDgCtx *sndDgCtx = NULL;
+	PTRANSPORT_ADDRESS tAddr = NULL;
+	PTA_ADDRESS taAddr = NULL;
+	PTA_IP_ADDRESS taIpAddr = NULL;
+	PUCHAR addr = NULL;
+	unsigned int i;
+#ifdef SCTP
+	PTDI_CMSGHDR scmsgp, scmsgp2;
+	struct sctp_sndrcvinfo *srcv, *srcv2;
+#endif
+
+	DbgPrint("ReceiveDatagram: start\n");
+	if (bytesIndicated == bytesAvailable) {
+		DbgPrint("ReceiveDatagram: #1\n");
+
+		DbgPrint("sourceAddressLength=%d,TA_IP_ADDRESS=%d\n",
+		    sourceAddressLength, sizeof(TA_IP_ADDRESS));
+		if (sourceAddressLength >= sizeof(TA_ADDRESS)) {
+			tAddr = (PTRANSPORT_ADDRESS)sourceAddress;
+			taAddr = (PTA_ADDRESS)&tAddr->Address[0];
+			if (taAddr->AddressType == TDI_ADDRESS_TYPE_IP &&
+			    taAddr->AddressLength == sizeof(TA_IP_ADDRESS)) {
+				taIpAddr = (PTA_IP_ADDRESS)tAddr;
+				addr = (UCHAR *)&taIpAddr->Address[0].Address[0].in_addr;
+				DbgPrint("from=%ld.%ld.%ld.%ld\n", addr[0], addr[1], addr[2], addr[3]);
+			}
+		}
+#ifdef SCTP
+		if (optionsLength == TDI_CMSG_SPACE(sizeof(struct sctp_sndrcvinfo))) {
+			scmsgp = (PTDI_CMSGHDR)options;
+			srcv = (struct sctp_sndrcvinfo *)(TDI_CMSG_DATA(scmsgp));
+			DbgPrint("sinfo_stream=%d,sinfo_ssn=%d,sinfo_flags=%d,sinfo_ppid=%d,sinfo_context=%d,sinfo_timetolive=%d,sinfo_tsn=%d,sinfo_cumtsn=%d,sinfo_assoc_id=%d\n",
+			    srcv->sinfo_stream,
+			    srcv->sinfo_ssn,
+			    srcv->sinfo_flags,
+			    srcv->sinfo_ppid,
+			    srcv->sinfo_context,
+			    srcv->sinfo_timetolive,
+			    srcv->sinfo_tsn,
+			    srcv->sinfo_cumtsn,
+			    srcv->sinfo_assoc_id);
+		}
+#endif
+		DbgPrint("length=%d,data=\"", bytesAvailable);
+		for (i = 0; i < bytesAvailable; i++) {
+			DbgPrint("%c", ((PUCHAR)tsdu)[i]);
+		}
+		DbgPrint("\"\n");
+
+		return STATUS_SUCCESS;
+	}
+	DbgPrint("ReceiveDatagram: #2\n");
+	return STATUS_SUCCESS;
+}
+
+
+#else
 VOID
 ReceiveDatagramThread(
     IN PVOID ctx)
@@ -440,6 +551,7 @@ done:
 	DbgPrint("ReceiveDatagramThread: end\n");
 	PsTerminateSystemThread(status);
 }
+#endif
 
 
 NTSTATUS
