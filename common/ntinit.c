@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntinit.c,v 1.8 2007/04/25 11:44:56 kozuka Exp $
+ * $Id: ntinit.c,v 1.9 2007/05/13 08:26:04 kozuka Exp $
  */
 
 #include <netinet/sctp_os_windows.h>
@@ -90,6 +90,8 @@ NDIS_HANDLE SctpBufferPool;
 NDIS_HANDLE SctpPacketPool;
 
 LARGE_INTEGER zero_timeout;
+LARGE_INTEGER StartTime;
+
 uint16_t ip_id = 0;
 
 void mbuf_init(void);
@@ -115,6 +117,8 @@ DriverEntry(
 	DbgPrint("DriverEntry: enter\n");
 
 	oldIrql = KeGetCurrentIrql();
+
+	KeQuerySystemTime(&StartTime);
 
 	mbuf_init();
 	TAILQ_INIT(&ifnet);

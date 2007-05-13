@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: globals.h,v 1.4 2007/04/23 15:50:32 kozuka Exp $
+ * $Id: globals.h,v 1.5 2007/05/13 08:28:27 kozuka Exp $
  */
 
 /*-
@@ -215,14 +215,10 @@ struct ip6_hdr {
 #define ip6_hlim        ip6_ctlun.ip6_un1.ip6_un1_hlim
 #define ip6_hops        ip6_ctlun.ip6_un1.ip6_un1_hlim
 
-struct in6_pktinfo_option {
-#if 0
-    UCHAR _padding[12];
-#else
+struct in6_pktinfo {
     UINT cmsg_len;
-    INT  cmsg_level;
+    INT cmsg_level;
     INT cmsg_type;
-#endif
     struct in6_addr ipi6_addr;
     ULONG ipi6_ifindex;
 };
