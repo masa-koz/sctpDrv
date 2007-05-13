@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntdisp.c,v 1.7 2007/05/13 08:26:04 kozuka Exp $
+ * $Id: ntdisp.c,v 1.8 2007/05/13 13:13:48 kozuka Exp $
  */
 #include "globals.h"
 
@@ -364,6 +364,7 @@ SCTPCreate(
 		if (so->so_type == SOCK_SEQPACKET) {
 			so->so_qlimit = 1; /* XXX */
 		}
+		so->so_options |= SO_USECONTROL; /* XXX */
 		KeLowerIrql(oldIrql);
 
 		sctpContext->socket = so;
@@ -846,40 +847,11 @@ SCTPReceiveDatagramCommon(
 	}
 
 	if (error == 0) {
-#if 0
-		if (from != NULL &&
-		    from->sa_family == AF_INET &&
-		    drr->drr_conninfo != NULL &&
-		    drr->drr_conninfo->RemoteAddressLength >= sizeof(TA_IP_ADDRESS)) {
-			taIpAddr = (PTA_IP_ADDRESS)drr->drr_conninfo->RemoteAddress;
-			taIpAddr->TAAddressCount = 1;
-			drr->drr_conninfo->RemoteAddressLength = taIpAddr->Address[0].AddressLength =
-			    sizeof(TA_IP6_ADDRESS);
-			taIpAddr->Address[0].AddressType = TDI_ADDRESS_TYPE_IP;
-			taIpAddr->Address[0].Address[0].sin_port = ((struct sockaddr_in *)from)->sin_port;
-			taIpAddr->Address[0].Address[0].in_addr = ((struct sockaddr_in *)from)->sin_addr.s_addr;
-		} else if (
-		    from != NULL &&
-		    from->sa_family == AF_INET6 &&
-		    drr->drr_conninfo != NULL &&
-		    drr->drr_conninfo->RemoteAddressLength >= sizeof(TA_IP6_ADDRESS)) {
-			taIp6Addr = (PTA_IP6_ADDRESS)drr->drr_conninfo->RemoteAddress;
-			taIp6Addr->TAAddressCount = 1;
-			drr->drr_conninfo->RemoteAddressLength = taIp6Addr->Address[0].AddressLength =
-			    sizeof(TA_IP6_ADDRESS);
-			taIp6Addr->Address[0].AddressType = TDI_ADDRESS_TYPE_IP6;
-			taIp6Addr->Address[0].Address[0].sin6_port = ((struct sockaddr_in6 *)from)->sin6_port;
-			RtlCopyMemory(&taIp6Addr->Address[0].Address[0].sin6_addr,
-			    &((struct sockaddr_in6 *)from)->sin6_addr, sizeof(struct in6_addr));
-			taIp6Addr->Address[0].Address[0].sin6_scope_id = ((struct sockaddr_in6 *)from)->sin6_scope_id;
-		}
-#else
 		if (from != NULL && drr->drr_conninfo != NULL) {
 			if (convertsockaddr(drr->drr_conninfo->RemoteAddress, &drr->drr_conninfo->RemoteAddressLength, from) < 0) {
 				drr->drr_conninfo->RemoteAddressLength = 0;
 			}
 		}
-#endif
 
 		if (control != NULL &&
 		    drr->drr_conninfo != NULL &&
@@ -1000,16 +972,15 @@ SCTPSendDatagram(
 		}
 	}
 
-	if (sendDatagramInformation != NULL && sendDatagramInformation->OptionsLength > sizeof(TDI_CMSGHDR)) {
-		 control = sctp_get_mbuf_for_msg(sendDatagramInformation->OptionsLength,
+	if (so->so_options & SO_USECONTROL) {
+		 control = sctp_get_mbuf_for_msg(CMSG_SPACE(sizeof(struct sctp_sndrcvinfo)),
 		    0,
 		    M_DONTWAIT,
 		    1,
 		    MT_SONAME);
 		if (control != NULL) {
-			RtlCopyMemory(SCTP_BUF_AT(control, 0), sendDatagramInformation->Options,
-			    sendDatagramInformation->OptionsLength);
-			SCTP_BUF_LEN(control) = sendDatagramInformation->OptionsLength;
+			uiomove(SCTP_BUF_AT(control, 0), CMSG_SPACE(sizeof(struct sctp_sndrcvinfo)), &uio);
+			SCTP_BUF_LEN(control) = CMSG_SPACE(sizeof(struct sctp_sndrcvinfo));
 		}
 	}
 
@@ -1383,33 +1354,33 @@ sorwakeup_locked(
 					    msghdr->cmsg_level, msghdr->cmsg_type, msghdr->cmsg_len);
 				}
 
-#if 0
-				rcvdgStatus = (*(so->so_rcvdg))(
-				    so->so_rcvdgarg,
-				    tAddrLength,
-				    tAddr,
-				    ((control != NULL) ? SCTP_BUF_LEN(control) : 0),
-				    ((control != NULL) ? SCTP_BUF_AT(control, 0) : NULL),
-				    ((length > SCTP_BUF_LEN(m)) ? TDI_RECEIVE_COPY_LOOKAHEAD : TDI_RECEIVE_ENTIRE_MESSAGE),
-				    SCTP_BUF_LEN(m),
-				    length,
-				    &bytesTaken,
-				    SCTP_BUF_AT(m, 0),
-				    &irp);
-#else
-				rcvdgStatus = (*(so->so_rcvdg))(
-				    so->so_rcvdgarg,
-				    tAddrLength,
-				    tAddr,
-				    0,
-				    NULL,
-				    TDI_RECEIVE_COPY_LOOKAHEAD,
-				    SCTP_BUF_LEN(control),
-				    SCTP_BUF_LEN(control) + length,
-				    &bytesTaken,
-				    SCTP_BUF_AT(control, 0),
-				    &irp);
-#endif
+				if (so->so_options & SO_USECONTROL) {
+					rcvdgStatus = (*(so->so_rcvdg))(
+					    so->so_rcvdgarg,
+					    tAddrLength,
+					    tAddr,
+					    0,
+					    NULL,
+					    TDI_RECEIVE_COPY_LOOKAHEAD,
+					    SCTP_BUF_LEN(control),
+					    SCTP_BUF_LEN(control) + length,
+					    &bytesTaken,
+					    SCTP_BUF_AT(control, 0),
+					    &irp);
+				} else {
+					rcvdgStatus = (*(so->so_rcvdg))(
+					    so->so_rcvdgarg,
+					    tAddrLength,
+					    tAddr,
+					    0,
+					    NULL,
+					    ((length > SCTP_BUF_LEN(m)) ? TDI_RECEIVE_COPY_LOOKAHEAD : TDI_RECEIVE_ENTIRE_MESSAGE),
+					    SCTP_BUF_LEN(m),
+					    length,
+					    &bytesTaken,
+					    SCTP_BUF_AT(m, 0),
+					    &irp);
+				}
 
 				DbgPrint("sorwakeup: so_rcvdg=%X,bytesTaken=%d\n", rcvdgStatus, bytesTaken);
 				if (rcvdgStatus == STATUS_MORE_PROCESSING_REQUIRED) {
@@ -1421,51 +1392,53 @@ sorwakeup_locked(
 
 					returnDatagramInformation = datagramInformation->ReturnDatagramInformation;
 
-					if (tAddr != NULL &&
-					    returnDatagramInformation != NULL &&
-					    (ULONG)returnDatagramInformation->RemoteAddressLength >= tAddrLength) {
-						RtlCopyMemory(returnDatagramInformation->RemoteAddress,
-						    tAddr, tAddrLength);
-						returnDatagramInformation->RemoteAddressLength = ((PTA_ADDRESS)&tAddr->Address[0])->AddressLength;
+					if (returnDatagramInformation != NULL) {
+						if (tAddr != NULL &&
+						    (ULONG)returnDatagramInformation->RemoteAddressLength >= tAddrLength) {
+							RtlCopyMemory(returnDatagramInformation->RemoteAddress,
+							    tAddr, tAddrLength);
+							returnDatagramInformation->RemoteAddressLength =
+							    ((PTA_ADDRESS)&tAddr->Address[0])->AddressLength;
+						} else {
+							returnDatagramInformation->RemoteAddress = NULL;
+							returnDatagramInformation->RemoteAddressLength = 0;
+						}
+
+						if (control != NULL &&
+						    returnDatagramInformation->OptionsLength >= SCTP_BUF_LEN(control)) {
+							RtlCopyMemory(returnDatagramInformation->Options,
+							    SCTP_BUF_AT(control, 0), SCTP_BUF_LEN(control));
+						} else {
+							returnDatagramInformation->Options = NULL;
+							returnDatagramInformation->OptionsLength = 0;
+						}
 					}
 
-#if 0
-					if (control != NULL &&
-					    returnDatagramInformation != NULL &&
-					    returnDatagramInformation->OptionsLength >= SCTP_BUF_LEN(control)) {
-						RtlCopyMemory(returnDatagramInformation->Options,
-						    SCTP_BUF_AT(control, 0),
-						    SCTP_BUF_LEN(control));
-					}
-#else
-					if (returnDatagramInformation != NULL) {
-						returnDatagramInformation->OptionsLength = 0;
-						returnDatagramInformation->Options = NULL;
-					}
-#endif
 					RtlZeroMemory(&uio, sizeof(uio));
 					uio.uio_buffer = irp->MdlAddress;
 					uio.uio_resid = datagramInformation->ReceiveLength;
 					uio.uio_rw = UIO_READ;
 					offset = bytesTaken;
-#if 0
-#else
-					if (offset < (ULONG)SCTP_BUF_LEN(control)) {
-						uiomove(SCTP_BUF_AT(control, offset), SCTP_BUF_LEN(control) - offset, &uio);
+
+					if (so->so_options & SO_USECONTROL) {
+						if (offset < (ULONG)SCTP_BUF_LEN(control)) {
+							uiomove(SCTP_BUF_AT(control, offset),
+							    SCTP_BUF_LEN(control) - offset, &uio);
+						}
+						offset = 0;
 					}
-					offset = 0;
-#endif
+
 					n = m;
 					do {
 						uiomove(SCTP_BUF_AT(n, offset), SCTP_BUF_LEN(n) - offset, &uio);
 						offset = 0;
 						n = SCTP_BUF_NEXT(n);
 					} while (n != NULL);
-#if 0
+
 					irp->IoStatus.Information = length - bytesTaken;
-#else
-					irp->IoStatus.Information = SCTP_BUF_LEN(control) + length - bytesTaken;
-#endif
+					if (so->so_options & SO_USECONTROL) {
+						irp->IoStatus.Information += SCTP_BUF_LEN(control);
+					}
 					irp->IoStatus.Status = STATUS_SUCCESS;
 					IoCompleteRequest(irp, 2);
 				}
@@ -1506,16 +1479,15 @@ sowwakeup_locked(
 		uio.uio_resid = dsr->dsr_size;
 		uio.uio_rw = UIO_WRITE;
 
-		if (dsr->dsr_conninfo != NULL && dsr->dsr_conninfo->OptionsLength > sizeof(TDI_CMSGHDR)) {
-			 control = sctp_get_mbuf_for_msg(dsr->dsr_conninfo->OptionsLength,
+		if (so->so_options & SO_USECONTROL) {
+			 control = sctp_get_mbuf_for_msg(CMSG_SPACE(sizeof(struct sctp_sndrcvinfo)),
 			    0,
 			    M_DONTWAIT,
 			    1,
 			    MT_SONAME);
 			if (control != NULL) {
-				RtlCopyMemory(SCTP_BUF_AT(control, 0), dsr->dsr_conninfo->Options,
-				    dsr->dsr_conninfo->OptionsLength);
-				SCTP_BUF_LEN(control) = dsr->dsr_conninfo->OptionsLength;
+				uiomove(SCTP_BUF_AT(control, 0), CMSG_SPACE(sizeof(struct sctp_sndrcvinfo)), &uio);
+				SCTP_BUF_LEN(control) = CMSG_SPACE(sizeof(struct sctp_sndrcvinfo));
 			}
 		}
 
