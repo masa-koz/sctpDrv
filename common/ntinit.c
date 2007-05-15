@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntinit.c,v 1.9 2007/05/13 08:26:04 kozuka Exp $
+ * $Id: ntinit.c,v 1.10 2007/05/15 03:37:26 kozuka Exp $
  */
 
 #include <netinet/sctp_os_windows.h>
@@ -213,10 +213,17 @@ DriverEntry(
 		goto error;
 	}
 
+	RtlInitUnicodeString(&devname, DD_SCTP_ONE_TO_ONE_DEVICE_NAME);
+	status = IoCreateDevice(DriverObject, 0, &devname, FILE_DEVICE_NETWORK, 0, FALSE, &SctpTcpDeviceObject);
+	if (status != STATUS_SUCCESS) {
+		DbgPrint("DriverEntry: leave #3\n");
+		goto error;
+	}
+
 	RtlInitUnicodeString(&devname, DD_SCTP_ONE_TO_MANY_DEVICE_NAME);
 	status = IoCreateDevice(DriverObject, 0, &devname, FILE_DEVICE_NETWORK, 0, FALSE, &SctpUdpDeviceObject);
 	if (status != STATUS_SUCCESS) {
-		DbgPrint("DriverEntry: leave #2\n");
+		DbgPrint("DriverEntry: leave #4\n");
 		goto error;
 	}
 	for (i = 0; i < IRP_MJ_MAXIMUM_FUNCTION; i++) {
