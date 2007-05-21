@@ -2177,7 +2177,6 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 			NET_LOCK_GIANT();
 #endif
 			SCTP_TCB_UNLOCK((*stcb));
-#if 0
 			so = sonewconn(oso, 0
 #if defined(__APPLE__) && !defined(SCTP_APPLE_PANTHER)
 			    ,NULL
@@ -2274,7 +2273,6 @@ sctp_handle_cookie_echo(struct mbuf *m, int iphlen, int offset,
 			/* Pull it from the incomplete queue and wake the guy */
 			soisconnected(so);
 			return (m);
-#endif /* #if 0 */
 		}
 	}
 	if ((notification) && ((*inp_p)->sctp_flags & SCTP_PCB_FLAGS_UDPTYPE)) {

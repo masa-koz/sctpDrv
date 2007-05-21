@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: sctp_os_windows.h,v 1.5 2007/04/25 11:49:44 kozuka Exp $
+ * $Id: sctp_os_windows.h,v 1.6 2007/05/21 09:20:56 kozuka Exp $
  */
 #ifndef __sctp_os_windows_h__
 #define __sctp_os_windows_h__
@@ -77,7 +77,7 @@ int uiomove(void *, unsigned int, struct uio *);
 typedef struct route sctp_route_t;
 #define NEW_STRUCT_ROUTE
 
-typedef void (*RequestCompleteRoutine)(void *, unsigned int, unsigned int);
+typedef void (*RequestCompleteRoutine)(void *, ULONG , ULONG);
 
 
 /* flags passed to ip_output as last parameter */
@@ -128,6 +128,22 @@ extern uint16_t ip_id;
 struct proc {
 	uint8_t dummy;
 };
+
+#if 0
+typedef struct sctp_assoc_conn {
+	STAILQ_ENTRY(sctp_assoc_conn) asc_entry;
+	CONNECTION_CONTEXT asc_conn_ctx;
+	PVOID asc_sctp_ctx;
+} SCTP_ASSOC_CONN, *PSCTP_ASSOC_CONN;
+STAILQ_HEAD(sctp_assoc_conn_head, sctp_assoc_conn);
+#endif
+
+typedef struct sctp_conn_request {
+	PTDI_CONNECTION_INFORMATION cnr_conninfo;
+	LARGE_INTEGER cnr_timeout;
+	RequestCompleteRoutine cnr_complete;
+	PVOID cnr_context;
+} SCTP_CONN_REQUEST, *PSCTP_CONN_REQUEST;
 
 typedef struct sctp_dgrcv_request {
 	BOOLEAN drr_queued;
@@ -187,15 +203,17 @@ struct socket {
 	struct	socket *so_head;	/* (e) back pointer to accept socket */
 	TAILQ_HEAD(, socket) so_incomp;	/* (e) queue of partial unaccepted connections */
 	TAILQ_HEAD(, socket) so_comp;	/* (e) queue of complete unaccepted connections */
+	TAILQ_HEAD(, socket) so_decomp;	/* (e) queue of complete rejected connections*/
         TAILQ_ENTRY(socket) so_list;    /* (e) list of unaccepted connections */
 	u_short	so_qlen;		/* (e) number of unaccepted connections */
 
 	u_short	so_incqlen;		/* (e) number of unaccepted incomplete
 					   connections */
+	u_short so_deqlen;		/* (e) numver of rejected connections */
 	u_short	so_qlimit;		/* (e) max number queued connections */
 	short	so_timeo;		/* (g) connection timeout */
 	u_short	so_error;		/* (f) error affecting connection */
-	struct sigio*so_sigio;		/* [sg] information for async I/O or
+	struct sigio *so_sigio;		/* [sg] information for async I/O or
 					   out of band data (SIGURG) */
 	u_long	so_oobmark;		/* (c) chars to oob mark */
 	TAILQ_HEAD(, aiocblist) so_aiojobq; /* AIO ops waiting on socket */
@@ -206,7 +224,7 @@ struct socket {
 #if 0
 		struct	selinfo sb_sel;	/* process selecting read/write */
 #endif
-		KMUTEX	sb_mtx;		/* sockbuf lock */
+		KSPIN_LOCK sb_lock;	/* sockbuf lock */
 		short	sb_state;	/* (c/d) socket state on sockbuf */
 #define sb_startzero	sb_mb
 		struct	mbuf *sb_mb;	/* (c/d) the mbuf chain */
@@ -239,6 +257,16 @@ struct socket {
 #define SB_AIO		0x80		/* AIO operations queued */
 #define SB_KNOTE	0x100		/* kernel note attached */
 
+#if 0
+	struct sctp_assoc_conn_head	so_assoc_conns;
+#endif
+	struct sctp_conn_request	*so_conn_req;
+	struct sctp_conn_request	*so_disconn_req;
+	PTDI_IND_CONNECT		so_conn;
+	void				*so_connarg;
+	CONNECTION_CONTEXT		so_conn_ctx;
+	PTDI_IND_RECEIVE		so_rcv_event;
+	void				*so_rcv_arg;
 	struct sctp_dgrcv_request_head	so_dgrcv_reqs;
 	PTDI_IND_RECEIVE_DATAGRAM	so_rcvdg;
 	void				*so_rcvdgarg;
@@ -272,6 +300,7 @@ struct socket {
 #define	SO_NOSIGPIPE	0x0800		/* no SIGPIPE from EPIPE */
 #define	SO_ACCEPTFILTER	0x1000		/* there is an accept filter */
 #define	SO_BINTIME	0x2000		/* timestamp received dgram traffic */
+#define SO_USECONTROL	0x4000
 
 #define SS_NOFDREF              0x0001  /* no file table ref any more */
 #define SS_ISCONNECTED          0x0002  /* socket connected to a peer */
@@ -294,6 +323,7 @@ struct socket {
  */
 #define SQ_INCOMP               0x0800  /* unaccepted, incomplete connection */
 #define SQ_COMP                 0x1000  /* unaccepted, complete connection */
+#define SQ_DECOMP               0x2000  /* rejected, complete connection */
 
 #define	MSG_OOB		0x1		/* process out-of-band data */
 #define	MSG_PEEK	0x2		/* peek at incoming message */
@@ -307,6 +337,10 @@ struct socket {
 #define	MSG_NBIO	0x4000		/* FIONBIO mode, used by fifofs */
 #define	MSG_COMPAT	0x8000		/* used in sendit() */
 #define	MSG_NOTIFICATION 0xf000
+
+struct socket *soalloc(void);
+struct socket *sonewconn(struct socket *, int);
+void soisconnected(struct socket *);
 
 #define	sowriteable(_so) 0
 #define	soreadable(_so) 0
@@ -327,44 +361,66 @@ void sowwakeup_locked(struct socket *);
 int getsockaddr(struct sockaddr **, caddr_t, size_t);
 struct sockaddr *sodupsockaddr(struct sockaddr *, int);
 
-#define soisconnected(_so)
-#define sonewconn(_so, _connstatus)
 #define	socantsendmore(_so)
 #define	sbwait(_so)	-1
 #define	sbspace(_so) 0
+
+extern KSPIN_LOCK accept_lock;
+
+#define	ACCEPT_LOCK_INIT(_sb) do { \
+	if (LOCKDEBUG) { \
+		DbgPrint("ACCEPT_LOCK_INIT: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeInitializeSpinLock(&accept_lock); \
+} while (0)
+
+#define	ACCEPT_LOCK_DESTROY(_sb) do { \
+	if (LOCKDEBUG) { \
+		DbgPrint("ACCEPT_LOCK_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeReleaseSpinLockFromDpcLevel(&accept_lock); \
+} while (0)
+
+#define	ACCEPT_LOCK(_sb) do { \
+	if (LOCKDEBUG) { \
+		DbgPrint("ACCEPT_LOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeAcquireSpinLockAtDpcLevel(&accept_lock); \
+} while (0)
+
+#define ACCEPT_UNLOCK(_sb) do { \
+	if (LOCKDEBUG) { \
+		DbgPrint("ACCEPT_UNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	} \
+	KeReleaseSpinLockFromDpcLevel(&accept_lock); \
+} while (0)
 
 #define	SOCKBUF_LOCK_INIT(_sb) do { \
 	if (LOCKDEBUG) { \
 		DbgPrint("SOCKBUF_LOCK_INIT: sb=%p %s[%d]\n", (_sb), __FILE__, __LINE__); \
 	} \
-	KeInitializeMutex(&(_sb)->sb_mtx, 0); \
+	KeInitializeSpinLock(&(_sb)->sb_lock); \
 } while (0)
 
 #define	SOCKBUF_LOCK_DESTROY(_sb) do { \
 	if (LOCKDEBUG) { \
 		DbgPrint("SOCKBUF_LOCK_DESTROY: sb=%p %s[%d]\n", (_sb), __FILE__, __LINE__); \
 	} \
-	if (KeReadStateMutex(&(_sb)->sb_mtx) == 0) { \
-		KeReleaseMutex(&(_sb)->sb_mtx, 0); \
-	} \
+	KeReleaseSpinLockFromDpcLevel(&(_sb)->sb_lock); \
 } while (0)
 
 #define	SOCKBUF_LOCK(_sb) do { \
 	if (LOCKDEBUG) { \
 		DbgPrint("SOCKBUF_LOCK: sb=%p %s[%d]\n", (_sb), __FILE__, __LINE__); \
 	} \
-	if (KeGetCurrentIrql() > PASSIVE_LEVEL) { \
-		while (KeWaitForMutexObject(&(_sb)->sb_mtx, Executive, KernelMode, FALSE, &zero_timeout) != STATUS_SUCCESS); \
-	} else { \
-		KeWaitForMutexObject(&(_sb)->sb_mtx, Executive, KernelMode, FALSE, NULL); \
-	} \
+	KeAcquireSpinLockAtDpcLevel(&(_sb)->sb_lock); \
 } while (0)
 
 #define SOCKBUF_UNLOCK(_sb) do { \
 	if (LOCKDEBUG) { \
 		DbgPrint("SOCKBUF_UNLOCK: sb=%p %s[%d]\n", (_sb), __FILE__, __LINE__); \
 	} \
-	KeReleaseMutex(&(_sb)->sb_mtx, 0); \
+	KeReleaseSpinLockFromDpcLevel(&(_sb)->sb_lock); \
 } while (0)
 
 #define	SOCK_LOCK(_so)		SOCKBUF_LOCK(&(_so)->so_rcv)

@@ -450,7 +450,7 @@ int sctp_listen(struct socket *, struct thread *);
 int sctp_listen(struct socket *, struct proc *);
 #endif
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 int sctp_accept(struct socket *, struct sockaddr **);
 #elif defined(__Panda__)
 int sctp_accept(struct socket *, struct sockaddr *, int *, void *, int *);

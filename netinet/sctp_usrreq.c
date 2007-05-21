@@ -184,7 +184,6 @@ sctp_pathmtu_adjustment(struct sctp_inpcb *inp,
 		}
 	}
 }
-
 #if !defined(__Windows__)
 #if defined(__Panda__)
 void
@@ -335,8 +334,9 @@ sctp_notify(struct sctp_inpcb *inp,
 		}
 	}
 }
+#endif
 
-#if !defined(__Panda__)
+#if !(defined(__Panda__) || defined(__Windows__))
 #if defined(__FreeBSD__) || defined(__APPLE__)
 void
 #else
@@ -526,7 +526,7 @@ SYSCTL_PROC(_net_inet_sctp, OID_AUTO, getcred, CTLTYPE_OPAQUE | CTLFLAG_RW,
 #endif				/* #if defined(__FreeBSD__) */
 
 
-#if defined(__Panda__)
+#if defined(__Panda__) || defined(__Windows__)
 int
 #elif defined(__FreeBSD__) && __FreeBSD_version > 690000
 static void
@@ -592,7 +592,6 @@ sctp_abort(struct socket *so)
 	return(0);
 #endif
 }
-#endif
 
 #if defined(__Panda__) || defined(__Windows__)
 int
@@ -4511,7 +4510,7 @@ sctp_listen(struct socket *so, struct proc *p)
 static int sctp_defered_wakeup_cnt = 0;
 
 int
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 sctp_accept(struct socket *so, struct sockaddr **addr)
 {
 #elif defined(__Panda__)
@@ -4569,7 +4568,7 @@ sctp_accept(struct socket *so, struct mbuf *nam)
 	if (store.sa.sa_family == AF_INET) {
 		struct sockaddr_in *sin;
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 		SCTP_MALLOC_SONAME(sin, struct sockaddr_in *, sizeof *sin);
 #else
 		sin = (struct sockaddr_in *)addr;
@@ -4579,7 +4578,7 @@ sctp_accept(struct socket *so, struct mbuf *nam)
 		sin->sin_len = sizeof(*sin);
 		sin->sin_port = ((struct sockaddr_in *)&store)->sin_port;
 		sin->sin_addr = ((struct sockaddr_in *)&store)->sin_addr;
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 		*addr = (struct sockaddr *)sin;
 #elif !defined(__Panda__)
 		SCTP_BUF_LEN(nam) = sizeof(*sin);
@@ -4587,7 +4586,7 @@ sctp_accept(struct socket *so, struct mbuf *nam)
 	} else {
 		struct sockaddr_in6 *sin6;
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 		SCTP_MALLOC_SONAME(sin6, struct sockaddr_in6 *, sizeof *sin6);
 #else
 		sin6 = (struct sockaddr_in6 *)addr;
@@ -4615,7 +4614,7 @@ sctp_accept(struct socket *so, struct mbuf *nam)
 			sin6->sin6_scope_id = 0;	/* XXX */
 #endif /* SCTP_KAME */
 #endif /* SCTP_EMBEDDED_V6_SCOPE */
-#if defined(__FreeBSD__) || defined (__APPLE__)
+#if defined(__FreeBSD__) || defined (__APPLE__) || defined(__Windows__)
 		*addr = (struct sockaddr *)sin6;
 #elif !defined(__Panda__)
 		SCTP_BUF_LEN(nam) = sizeof(*sin6);
