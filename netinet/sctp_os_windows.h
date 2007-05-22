@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: sctp_os_windows.h,v 1.6 2007/05/21 09:20:56 kozuka Exp $
+ * $Id: sctp_os_windows.h,v 1.7 2007/05/22 04:39:51 kozuka Exp $
  */
 #ifndef __sctp_os_windows_h__
 #define __sctp_os_windows_h__
@@ -145,6 +145,15 @@ typedef struct sctp_conn_request {
 	PVOID cnr_context;
 } SCTP_CONN_REQUEST, *PSCTP_CONN_REQUEST;
 
+typedef struct sctp_snd_request {
+	STAILQ_ENTRY(sctp_snd_request) sndr_entry;
+	PNDIS_BUFFER sndr_buffer;
+	ULONG sndr_size;
+	RequestCompleteRoutine sndr_complete;
+	PVOID sndr_context;
+} SCTP_SND_REQUEST, *PSCTP_SND_REQUEST;
+STAILQ_HEAD(sctp_snd_request_head, sctp_snd_request);
+
 typedef struct sctp_dgrcv_request {
 	BOOLEAN drr_queued;
 	STAILQ_ENTRY(sctp_dgrcv_request) drr_entry;
@@ -265,8 +274,11 @@ struct socket {
 	PTDI_IND_CONNECT		so_conn;
 	void				*so_connarg;
 	CONNECTION_CONTEXT		so_conn_ctx;
+	PTDI_IND_DISCONNECT		so_disconn_event;
+	void				*so_disconn_arg;
 	PTDI_IND_RECEIVE		so_rcv_event;
 	void				*so_rcv_arg;
+	struct sctp_snd_request_head	so_snd_reqs;
 	struct sctp_dgrcv_request_head	so_dgrcv_reqs;
 	PTDI_IND_RECEIVE_DATAGRAM	so_rcvdg;
 	void				*so_rcvdgarg;
@@ -339,8 +351,10 @@ struct socket {
 #define	MSG_NOTIFICATION 0xf000
 
 struct socket *soalloc(void);
+void sofree(struct socket *);
 struct socket *sonewconn(struct socket *, int);
 void soisconnected(struct socket *);
+int soabort(struct socket *);
 
 #define	sowriteable(_so) 0
 #define	soreadable(_so) 0

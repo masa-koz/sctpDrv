@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntdisp.c,v 1.10 2007/05/21 08:54:33 kozuka Exp $
+ * $Id: ntdisp.c,v 1.11 2007/05/22 04:37:39 kozuka Exp $
  */
 #include "globals.h"
 
@@ -36,7 +36,7 @@ typedef struct socket SCTP_SOCKET, *PSCTP_SOCKET;
 
 typedef struct sctp_context {
 	PSCTP_SOCKET socket;
-	PSCTP_SOCKET socketDup;
+	BOOLEAN dupSocket;
 	CONNECTION_CONTEXT connCtx;
 	int refcount;
 	BOOLEAN cancelIrps;
@@ -46,6 +46,7 @@ typedef struct sctp_context {
 int sctp_attach(struct socket *, int proto, struct proc *);
 int sctp_bind(struct socket *, struct sockaddr *, struct proc *);
 int sctp_detach(struct socket *);
+int sctp_connect(struct socket *, struct sockaddr *);
 int sctp_disconnect(struct socket *);
 int sctp_abort(struct socket *);
 #if 0
@@ -61,13 +62,15 @@ NTSTATUS SCTPAssociateAddress(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPDisassociateAddress(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPListen(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPAccept(IN PIRP, IN PIO_STACK_LOCATION);
-NTSTATUS SCTPDisconnect(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPConnect(IN PIRP, IN PIO_STACK_LOCATION);
+NTSTATUS SCTPDisconnect(IN PIRP, IN PIO_STACK_LOCATION);
+NTSTATUS SCTPDispatchSend(IN PIRP, IN PIO_STACK_LOCATION);
 
 NTSTATUS SCTPReceiveDatagram(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPReceiveDatagramCommon(IN PSCTP_SOCKET, IN PSCTP_DGRCV_REQUEST, OUT ULONG *);
 void SCTPCancelReceiveDatagram(IN PSCTP_SOCKET, IN PVOID);
 void SCTPDeliverData(struct socket *);
+void SCTPNotifyDisconnect(struct socket *);
 void SCTPProcessReceiveEvent(struct socket *);
 void SCTPDeliverDatagram(struct socket *);
 
@@ -77,7 +80,6 @@ void SCTPCancelSendDatagram(IN PSCTP_SOCKET, IN PVOID);
 NTSTATUS SCTPSetEventHandler(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPQueryInformation(IN PIRP, IN PIO_STACK_LOCATION);
 
-void SCTPAbortAndIndicateDisconnect(IN PSCTP_SOCKET);
 int convertsockaddr(PTRANSPORT_ADDRESS, ULONG *, struct sockaddr *);
 
 static FILE_FULL_EA_INFORMATION UNALIGNED *FindEAInfo(PFILE_FULL_EA_INFORMATION, CHAR *, USHORT);
@@ -127,10 +129,10 @@ SCTPCancelRequest(
     IN PIRP irp)
 {
 	NTSTATUS status = STATUS_SUCCESS;
+	KIRQL oldIrql;
 	PIO_STACK_LOCATION irpSp;
 	PFILE_OBJECT fileObject;
 	PSCTP_DRIVER_CONTEXT sctpContext;
-	TDI_REQUEST request;
 
 	DbgPrint("SCTPCancelRequest: enter\n");
 	irpSp = IoGetCurrentIrpStackLocation(irp);
@@ -147,11 +149,6 @@ SCTPCancelRequest(
 	DbgPrint("SCTPCancelRequest: MinorFunction=%d\n", irpSp->MinorFunction);
 
 	switch (irpSp->MinorFunction) {
-	case TDI_SEND:
-	case TDI_RECEIVE:
-		SCTPAbortAndIndicateDisconnect(sctpContext->socket);
-		break;
-
 	case TDI_SEND_DATAGRAM:
 		SCTPCancelSendDatagram(sctpContext->socket, irp);
 		break;
@@ -162,14 +159,12 @@ SCTPCancelRequest(
 	case TDI_DISASSOCIATE_ADDRESS:
 		break;
 
+	case TDI_SEND:
+	case TDI_RECEIVE:
 	default:
-#if 0
-		request.Handle.connectionContext = sctpContext->handle.connectionContext;
-		request.RequestNotifyObject = SCTPCancelComplete;
-		request.RequestContext = fileObject;
-
-		status = TdiDisconnect(&request, NULL, TDI_DISCONNECT_ABORT, NULL, NULL);
-#endif
+		KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
+		soabort(sctpContext->socket);
+		KeLowerIrql(oldIrql);
 		break;
 	}
 
@@ -382,6 +377,7 @@ SCTPCreate(
 		DbgPrint("ea->EaValueLength=%d\n", ea->EaValueLength);
 		DbgPrint("&ea->EaName[ea->EaNameLength + 1]=%p\n", &ea->EaName[ea->EaNameLength + 1]);
 		sctpContext->connCtx = *(CONNECTION_CONTEXT UNALIGNED *)&ea->EaName[ea->EaNameLength + 1];
+		sctpContext->dupSocket = FALSE;
 		DbgPrint("sctpContext->connCtx=%p\n", sctpContext->connCtx);
 		irpSp->FileObject->FsContext = sctpContext;
 		irpSp->FileObject->FsContext2 = (PVOID)TDI_CONNECTION_FILE;
@@ -429,26 +425,28 @@ SCTPCleanup(
 		DbgPrint("SCTPCleanup: #1.1\n");
 		so = sctpContext->socket;
 		if (so != NULL) {
+			KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
 			if (so->so_pcb != NULL) {
-				KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
 				error = sctp_detach(so);
-				KeLowerIrql(oldIrql);
 			}
-			ExFreePool(so);
+			SOCK_LOCK(so);
+			sofree(so);
+			KeLowerIrql(oldIrql);
 		}
 
 		status = STATUS_SUCCESS;
 	} else if (
 	    (int)irpSp->FileObject->FsContext2 == TDI_CONNECTION_FILE) {
 		DbgPrint("SCTPCleanup: #1.2\n");
-		so = sctpContext->socketDup;
-		if (so != NULL) {
+		if (sctpContext->dupSocket == TRUE && sctpContext->socket != NULL) {
+			so = sctpContext->socket;
+			KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
 			if (so->so_pcb != NULL) {
-				KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
 				error = sctp_detach(so);
-				KeLowerIrql(oldIrql);
 			}
-			ExFreePool(so);
+			SOCK_LOCK(so);
+			sofree(so);
+			KeLowerIrql(oldIrql);
 		}
 
 		status = STATUS_SUCCESS;
@@ -565,14 +563,24 @@ SCTPDispatchInternalDeviceControl(
 
 			DbgPrint("SCTPDispatchInternalDeviceControl: leave #1.4\n");
 			return status;
-		case TDI_DISCONNECT:
-			status = SCTPDisconnect(irp, irpSp);
+		case TDI_CONNECT:
+			status = SCTPConnect(irp, irpSp);
 
 			DbgPrint("SCTPDispatchInternalDeviceControl: leave #1.5\n");
 			return status;
+		case TDI_DISCONNECT:
+			status = SCTPDisconnect(irp, irpSp);
+
+			DbgPrint("SCTPDispatchInternalDeviceControl: leave #1.6\n");
+			return status;
+		case TDI_SEND:
+			status = SCTPDispatchSend(irp, irpSp);
+
+			DbgPrint("SCTPDispatchInternalDeviceControl: leave #1.7\n");
+			return status;
 		case TDI_QUERY_INFORMATION:
 			status = SCTPQueryInformation(irp, irpSp);
-			DbgPrint("SCTPDispatchInternalDeviceControl: leave #1.6\n");
+			DbgPrint("SCTPDispatchInternalDeviceControl: leave #1.8\n");
 		default:
 			status = STATUS_INVALID_DEVICE_REQUEST;
 			break;
@@ -843,6 +851,114 @@ SCTPAccept(
 }
 
 NTSTATUS
+SCTPConnect(
+    IN PIRP irp,
+    IN PIO_STACK_LOCATION irpSp)
+{
+	KIRQL oldIrql;
+	NTSTATUS status = STATUS_SUCCESS;
+	int error = 0;
+	PTDI_REQUEST_KERNEL_CONNECT connectRequest;
+	PTDI_CONNECTION_INFORMATION requestInformation, returnInformation;
+	PSCTP_DRIVER_CONTEXT sctpContext;
+	struct socket *so = NULL;
+	PTRANSPORT_ADDRESS tAddr = NULL;
+	struct sockaddr *addr = NULL;
+	PSCTP_CONN_REQUEST cnr = NULL;
+	PLARGE_INTEGER timeout = NULL;
+
+	DbgPrint("SCTPConnect: enter\n");
+
+	connectRequest = (PTDI_REQUEST_KERNEL_CONNECT)&irpSp->Parameters;
+	requestInformation = connectRequest->RequestConnectionInformation;
+	returnInformation = connectRequest->ReturnConnectionInformation;
+
+	sctpContext = (PSCTP_DRIVER_CONTEXT)irpSp->FileObject->FsContext;
+	if (sctpContext->socket == NULL) {
+		DbgPrint("SCTPConnect: leave #1\n");
+		status = STATUS_INVALID_CONNECTION;
+		goto done1;
+	}
+	so = sctpContext->socket;
+
+	if (requestInformation != NULL && requestInformation->RemoteAddressLength >= sizeof(TRANSPORT_ADDRESS)) {
+		tAddr = (TRANSPORT_ADDRESS *)requestInformation->RemoteAddress;
+		switch (tAddr->Address[0].AddressType) {
+		case TDI_ADDRESS_TYPE_IP:
+			DbgPrint("sizeof(TDI_ADDRESS_IP)=%d,sizeof(struct sockaddr_in)=%d\n", sizeof(TDI_ADDRESS_IP), sizeof(struct sockaddr_in));
+			if (tAddr->Address[0].AddressLength == sizeof(TDI_ADDRESS_IP)) {
+				addr = (struct sockaddr *)&tAddr->Address;
+				addr->sa_len = sizeof(struct sockaddr_in);
+			} else {
+				status = TDI_BAD_ADDR;
+			}
+			break;
+		case TDI_ADDRESS_TYPE_IP6:
+			if (tAddr->Address[0].AddressLength == sizeof(TDI_ADDRESS_IP6)) {
+				addr = (struct sockaddr *)&tAddr->Address;
+				addr->sa_len = sizeof(struct sockaddr_in6);
+			}
+			break;
+		default:
+			status = TDI_BAD_ADDR;
+			break;
+                }
+	} else {
+		status = TDI_BAD_ADDR;
+	}
+
+	if (status != STATUS_SUCCESS) {
+		DbgPrint("SCTPConnect: leave #2\n");
+		goto done1;
+	}
+	DbgPrint("SCTPConnect: dest=");
+	sctp_print_address(addr);
+
+	status = SCTPPrepareIrpForCancel(sctpContext, irp, SCTPCancelRequest);
+	if (status != STATUS_SUCCESS) {
+		/* This IRP canceled. */
+		DbgPrint("SCTPConnect: leave #3\n");
+		return status;
+	}
+
+	cnr = ExAllocatePool(NonPagedPool, sizeof(*cnr));
+	if (cnr == NULL) {
+		status = STATUS_INSUFFICIENT_RESOURCES;
+		DbgPrint("SCTPConnect: leave #4\n");
+		goto done;
+	}
+	RtlZeroMemory(cnr, sizeof(*cnr));
+
+	cnr->cnr_complete = SCTPRequestComplete;
+	cnr->cnr_context = irp;
+	cnr->cnr_conninfo = returnInformation;
+
+	KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
+	SOCK_LOCK(so);
+	so->so_conn_req = cnr;
+	so->so_conn_ctx = sctpContext->connCtx;
+	SOCK_UNLOCK(so);
+
+	error = sctp_connect(so, addr);
+	KeLowerIrql(oldIrql);
+	status = STATUS_PENDING;
+
+done:
+	if (status != STATUS_PENDING) {
+		SCTPRequestComplete(irp, status, 0);
+	}
+	DbgPrint("SCTPConnect: leave\n");
+	return STATUS_PENDING;
+
+done1:
+	irp->IoStatus.Status = status;
+	irp->IoStatus.Information = 0;
+	IoCompleteRequest(irp, IO_NETWORK_INCREMENT);
+	DbgPrint("SCTPConnect: leave #1\n");
+	return status;
+}
+
+NTSTATUS
 SCTPDisconnect(
     IN PIRP irp,
     IN PIO_STACK_LOCATION irpSp)
@@ -892,6 +1008,7 @@ SCTPDisconnect(
 
 	status = SCTPPrepareIrpForCancel(sctpContext, irp, SCTPCancelRequest);
 	if (status != STATUS_SUCCESS) {
+		/* This IRP canceled. */
 		DbgPrint("SCTPDisconnect: leave #5\n");
 		return status;
 	}
@@ -913,13 +1030,12 @@ SCTPDisconnect(
 	SOCK_UNLOCK(so);
 
 	error = sctp_disconnect(so);
-	KeLowerIrql(oldIrql);
 	status = STATUS_PENDING;
-
 done:
 	if (status != STATUS_PENDING) {
 		SCTPRequestComplete(irp, status, 0);
 	}
+	KeLowerIrql(oldIrql);
 	DbgPrint("SCTPDisconnect: leave\n");
 	return STATUS_PENDING;
 
@@ -928,6 +1044,89 @@ done1:
 	irp->IoStatus.Information = 0;
 	IoCompleteRequest(irp, IO_NETWORK_INCREMENT);
 	DbgPrint("SCTPDisconnect: leave #1\n");
+	return status;
+}
+
+
+NTSTATUS
+SCTPDispatchSend(
+    IN PIRP irp,
+    IN PIO_STACK_LOCATION irpSp)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	KIRQL oldIrql;
+	int error = 0;
+	PTDI_REQUEST_KERNEL_SEND sendRequest;
+	PSCTP_DRIVER_CONTEXT sctpContext;
+	struct socket *so = NULL;
+	struct uio uio;
+	ULONG sentLength = 0;
+	PSCTP_SND_REQUEST sndr = NULL;
+
+	DbgPrint("SCTPDispatchSend: enter\n");
+	sendRequest = (PTDI_REQUEST_KERNEL_SEND)&(irpSp->Parameters);
+
+	sctpContext = (PSCTP_DRIVER_CONTEXT)irpSp->FileObject->FsContext;
+	if (sctpContext->socket == NULL) {
+		DbgPrint("SCTPDispatchSend: leave #1\n");
+		status = STATUS_INVALID_CONNECTION;
+		goto done1;
+	}
+	so = sctpContext->socket;
+
+	status = SCTPPrepareIrpForCancel(sctpContext, irp, SCTPCancelRequest);
+	if (status != STATUS_SUCCESS) {
+		/* This IRP canceled. */
+		DbgPrint("SCTPDispatchSend: leave #2\n");
+		return status;
+	}
+
+	RtlZeroMemory(&uio, sizeof(uio));
+	uio.uio_buffer = irp->MdlAddress;
+	uio.uio_resid = sendRequest->SendLength;
+	uio.uio_rw = UIO_WRITE;
+
+	KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
+	error = sctp_sosend(so, NULL, &uio, NULL, NULL, MSG_NBIO, NULL);
+	DbgPrint("SCTPDispatchSend: sctp_sosend=%d\n", error);
+	if (error == 0) {
+		sentLength = sendRequest->SendLength;
+		status = STATUS_SUCCESS;
+	} else if (error == EWOULDBLOCK) {
+		sndr = ExAllocatePool(NonPagedPool, sizeof(*sndr));
+		if (sndr == NULL) {
+			status = STATUS_INSUFFICIENT_RESOURCES;
+			DbgPrint("SCTPDispatchSend: leave #3.1\n");
+			goto done;
+		}
+		RtlZeroMemory(sndr, sizeof(*sndr));
+
+		sndr->sndr_complete = SCTPRequestComplete;
+		sndr->sndr_context = irp;
+		sndr->sndr_buffer = irp->MdlAddress;
+		sndr->sndr_size = sendRequest->SendLength;
+
+		SOCK_LOCK(so);
+		STAILQ_INSERT_TAIL(&so->so_snd_reqs, sndr, sndr_entry);
+		SOCK_UNLOCK(so);
+		KeLowerIrql(oldIrql);
+		status = STATUS_PENDING;
+	} else {
+		status = STATUS_INVALID_CONNECTION;
+	}
+done:
+	if (status != STATUS_PENDING) {
+		SCTPRequestComplete(irp, status, sentLength);
+	}
+	KeLowerIrql(oldIrql);
+	DbgPrint("SCTPDispatchSend: leave\n");
+	return STATUS_PENDING;
+
+done1:
+	irp->IoStatus.Status = status;
+	irp->IoStatus.Information = 0;
+	IoCompleteRequest(irp, IO_NETWORK_INCREMENT);
+	DbgPrint("SCTPDispatchSend: leave #1\n");
 	return status;
 }
 
@@ -952,6 +1151,7 @@ SCTPReceiveDatagram(
 
 	status = SCTPPrepareIrpForCancel(sctpContext, irp, SCTPCancelRequest);
 	if (status != STATUS_SUCCESS) {
+		/* This IRP canceled. */
 		DbgPrint("SCTPReceiveDatagram: leave #1\n");
 		return status;
 	}
@@ -1108,6 +1308,7 @@ SCTPSendDatagram(
 
 	status = SCTPPrepareIrpForCancel(sctpContext, irp, SCTPCancelRequest);
 	if (status != STATUS_SUCCESS) {
+		/* This IRP canceled. */
 		DbgPrint("SCTPSendDatagram: leave #1\n");
 		return status;
 	}
@@ -1253,6 +1454,9 @@ SCTPSetEventHandler(
 		so->so_rcv_arg = event->EventContext;
 		break;
 	case TDI_EVENT_DISCONNECT:
+		so->so_disconn_event = event->EventHandler;
+		so->so_disconn_arg = event->EventContext;
+		break;
 	case TDI_EVENT_ERROR:
 	case TDI_EVENT_CHAINED_RECEIVE:
 		status = STATUS_SUCCESS;
@@ -1360,6 +1564,7 @@ SCTPQueryInformation(
 
 	status = SCTPPrepareIrpForCancel(sctpContext, irp, NULL);
 	if (status != STATUS_SUCCESS) {
+		/* This IRP canceled. */
 		DbgPrint("SCTPQueryInformation: leave #2\n");
 		return status;
 	}
@@ -1382,6 +1587,7 @@ SCTPQueryInformation(
 		    TDI_SERVICE_ORDERLY_RELEASE |
 		    TDI_SERVICE_ERROR_FREE_DELIVERY |
 		    TDI_SERVICE_CONNECTIONLESS_MODE |
+		    TDI_SERVICE_INTERNAL_BUFFERING |
 #if 0
 		    TDI_SERVICE_DELAYED_ACCEPTANCE |
 #endif
@@ -1439,12 +1645,6 @@ done:
 	return STATUS_PENDING;
 }
 
-void
-SCTPAbortAndIndicateDisconnect(
-    IN PSCTP_SOCKET socket)
-{
-}
-
 
 struct socket *
 soalloc(void)
@@ -1461,6 +1661,7 @@ soalloc(void)
 	STAILQ_INIT(&so->so_assoc_conns);
 	STAILQ_INIT(&so->so_conn_reqs);
 #endif
+	STAILQ_INIT(&so->so_snd_reqs);
 	STAILQ_INIT(&so->so_dgrcv_reqs);
 	STAILQ_INIT(&so->so_dgsnd_reqs);
 	TAILQ_INIT(&so->so_incomp);
@@ -1470,6 +1671,68 @@ soalloc(void)
 	SOCKBUF_LOCK_INIT(&so->so_snd);
 
 	return so;
+}
+
+void
+sofree(
+    struct socket *so)
+{
+	int error = 0;
+	struct sctp_snd_request *sndr = NULL;
+	struct socket *head, *so1;
+
+	DbgPrint("sofree: enter\n");
+
+	head = so->so_head;
+	if (head != NULL) {
+		DbgPrint("sofree: #1\n");
+		SOCK_LOCK(head);
+		if (so->so_qstate & SQ_INCOMP) {
+			DbgPrint("sofree: #1.1\n");
+			TAILQ_REMOVE(&head->so_incomp, so, so_list);
+			head->so_incqlen--;
+			so->so_qstate &= ~SQ_INCOMP;
+		}
+
+		if (so->so_qstate & SQ_DECOMP) {
+			DbgPrint("sofree: #1.2\n");
+			TAILQ_REMOVE(&head->so_decomp, so, so_list);
+			head->so_deqlen--;
+			so->so_qstate &= ~SQ_DECOMP;
+		}
+		SOCK_UNLOCK(head);
+	}
+
+	while (!TAILQ_EMPTY(&so->so_incomp)) {
+		DbgPrint("sofree: #2\n");
+		so1 = TAILQ_FIRST(&so->so_incomp);
+		TAILQ_REMOVE(&so->so_incomp, so1, so_list);
+		error = soabort(so1);
+		sofree(so1);
+	}
+
+	while (!TAILQ_EMPTY(&so->so_decomp)) {
+		DbgPrint("sofree: #3\n");
+		so1 = TAILQ_FIRST(&so->so_decomp);
+		TAILQ_REMOVE(&so->so_decomp, so1, so_list);
+		error = soabort(so1);
+		sofree(so1);
+	}
+
+	while (!STAILQ_EMPTY(&so->so_snd_reqs)) {
+		DbgPrint("sofree: #4\n");
+		sndr = STAILQ_FIRST(&so->so_snd_reqs);
+		STAILQ_REMOVE_HEAD(&so->so_snd_reqs, sndr_entry);
+		(*(sndr->sndr_complete))(sndr->sndr_context, STATUS_INVALID_CONNECTION, 0);
+		ExFreePool(sndr);
+	}
+
+	SOCKBUF_LOCK(&so->so_snd);
+
+	SOCKBUF_LOCK_DESTROY(&so->so_rcv);
+	SOCKBUF_LOCK_DESTROY(&so->so_snd);
+
+	ExFreePool(so);
 }
 
 struct socket *
@@ -1493,9 +1756,6 @@ sonewconn(
 	so->so_snd.sb_lowat = head->so_snd.sb_lowat;
 	so->so_rcv.sb_timeo = head->so_rcv.sb_timeo;
 	so->so_snd.sb_timeo = head->so_snd.sb_timeo;
-
-	so->so_rcv_event = head->so_rcv_event;
-	so->so_rcv_arg = head->so_rcv_arg;
 
 	error = sctp_attach(so, IPPROTO_SCTP, NULL);
 
@@ -1533,6 +1793,7 @@ soisconnected(
         } taAddr;
 	CONNECTION_CONTEXT connContext = NULL;
 	PTDI_REQUEST_KERNEL_ACCEPT acceptRequest;
+	PTDI_REQUEST_KERNEL_CONNECT connectRequest;
 	PTDI_CONNECTION_INFORMATION requestInformation, returnInformation;
 #if 0
 	PSCTP_ASSOC_CONN asc = NULL;
@@ -1593,8 +1854,17 @@ soisconnected(
 				returnInformation = acceptRequest->ReturnConnectionInformation;
 				sctpContext = (PSCTP_DRIVER_CONTEXT)irpSp->FileObject->FsContext;
 				so->so_head = NULL;
+
+				so->so_rcv_event = head->so_rcv_event;
+				so->so_rcv_arg = head->so_rcv_arg;
+				so->so_disconn_event = head->so_disconn_event;
+				so->so_disconn_arg = head->so_disconn_arg;
+
 				so->so_conn_ctx = sctpContext->connCtx;
+
 				sctpContext->socket = so;
+				sctpContext->dupSocket = TRUE;
+
 				if (returnInformation != NULL &&
 				    (ULONG)returnInformation->RemoteAddressLength >= tAddrLength) {
 					RtlCopyMemory(returnInformation->RemoteAddress, tAddr, tAddrLength);
@@ -1635,6 +1905,40 @@ soisconnected(
 			}
 #endif
 		}
+	} else if (so->so_conn_req != NULL) {
+		cnr = so->so_conn_req;
+		returnInformation = cnr->cnr_conninfo;
+
+		if (returnInformation != NULL && returnInformation->RemoteAddressLength > sizeof(TRANSPORT_ADDRESS)) {
+			inp = (struct sctp_inpcb *)so->so_pcb;
+			if (inp != NULL) {
+				SCTP_INP_RLOCK(inp);
+				stcb = LIST_FIRST(&inp->sctp_asoc_list);
+				if (stcb != NULL) {
+					SCTP_TCB_LOCK(stcb);
+					tAddr = (PTRANSPORT_ADDRESS)returnInformation->RemoteAddress;
+					tAddrLength = returnInformation->RemoteAddressLength;
+					if (convertsockaddr(tAddr, &tAddrLength,
+						(struct sockaddr *)&stcb->asoc.primary_destination->ro._l_addr) < 0) {
+						tAddr = NULL;
+						tAddrLength = 0;
+					}
+					SCTP_TCB_UNLOCK(stcb);
+				}
+				SCTP_INP_RUNLOCK(inp);
+			}
+		}
+
+		if (returnInformation != NULL && tAddr != NULL) {
+			returnInformation->RemoteAddressLength = tAddrLength;
+		} else if (returnInformation != NULL) {
+			returnInformation->RemoteAddress = NULL;
+			returnInformation->RemoteAddressLength = 0;
+		}
+
+		(*(cnr->cnr_complete))(cnr->cnr_context, STATUS_SUCCESS, 0);
+		ExFreePool(cnr);
+		so->so_conn_req = NULL;
 	}
 	SOCK_UNLOCK(so);
 	DbgPrint("soisconnected: leave\n");
@@ -1650,7 +1954,10 @@ sorwakeup_locked(
 	switch (so->so_type) {
 	case SOCK_STREAM:
 		inp = (struct sctp_inpcb *)so->so_pcb;
-		if (inp != NULL && (inp->sctp_flags & SCTP_PCB_FLAGS_CONNECTED) != 0) {
+		if (inp != NULL &&
+		    ((inp->sctp_flags & SCTP_PCB_FLAGS_CONNECTED) != 0 ||
+		     (inp->sctp_flags & SCTP_PCB_FLAGS_WAS_CONNECTED) != 0
+		    )){
 			SCTPDeliverData(so);
 		} else {
 		}
@@ -1667,29 +1974,60 @@ void
 SCTPDeliverData(
     struct socket *so)
 {
-	PSCTP_CONN_REQUEST cnr = NULL;
-
-	if (so->so_rcv.sb_cc == 0) {
+	while (so->so_rcv.sb_cc > 0 && so->so_rcv_event != NULL) {
 		DbgPrint("SCTPDeliverData: #1\n");
-
-		if (so->so_disconn_req != NULL) {
-			DbgPrint("SCTPDeliverData: #1.1\n");
-			cnr = so->so_disconn_req;
-			(*(cnr->cnr_complete))(cnr->cnr_context, STATUS_SUCCESS, 0);
-			ExFreePool(cnr);
-			so->so_disconn_req = NULL;
-		} else if (so->so_rcv_event != NULL) {
-			DbgPrint("SCTPDeliverData: #1.2\n");
-			SCTPProcessReceiveEvent(so);
-		}
-		return;
+		SCTPProcessReceiveEvent(so);
 	}
 
-	while (so->so_rcv.sb_cc > 0) {
-		DbgPrint("SCTPDeliverData: #2\n");
-		if (so->so_rcv_event != NULL) {
-			SCTPProcessReceiveEvent(so);
-		}
+	DbgPrint("SCTPDeliverData: so_error=%d,so_rcv.sb_cc=%d\n", so->so_error, so->so_rcv.sb_cc);
+	if (so->so_error == ECONNREFUSED || so->so_error == ECONNRESET) {
+		SCTPNotifyDisconnect(so);
+	}
+}
+
+void
+SCTPNotifyDisconnect(
+    struct socket *so)
+{
+	PSCTP_CONN_REQUEST cnr = NULL;
+	PSCTP_SND_REQUEST sndr = NULL;
+	NTSTATUS disconnStatus;
+
+	DbgPrint("SCTPNotifyDisconnect: enter\n");
+
+	if (so->so_conn_req != NULL) {
+		DbgPrint("SCTPNotifyDisconnect: #1\n");
+		cnr = so->so_conn_req;
+		(*(cnr->cnr_complete))(cnr->cnr_context, TDI_CONN_REFUSED, 0);
+		ExFreePool(cnr);
+		so->so_conn_req = NULL;
+	}
+
+	if (so->so_disconn_req != NULL) {
+		DbgPrint("SCTPNotifyDisconnect: #2.1\n");
+		cnr = so->so_disconn_req;
+		(*(cnr->cnr_complete))(cnr->cnr_context, STATUS_SUCCESS, 0);
+		ExFreePool(cnr);
+		so->so_disconn_req = NULL;
+	} else if (so->so_disconn_event != NULL) {
+		DbgPrint("SCTPNotifyDisconnect: #2.2\n");
+		disconnStatus = (*(so->so_disconn_event))(
+		    so->so_disconn_arg,
+		    so->so_conn_ctx,
+		    0,
+		    NULL,
+		    0,
+		    NULL,
+		    so->so_error == ECONNREFUSED ? TDI_DISCONNECT_RELEASE : TDI_DISCONNECT_ABORT);
+		DbgPrint("SCTPNotifyDisconnect: disconnStatus=%X\n", disconnStatus);
+	}
+
+	while (!STAILQ_EMPTY(&so->so_snd_reqs)) {
+		DbgPrint("SCTPNotifyDisconnect: #3\n");
+		sndr = STAILQ_FIRST(&so->so_snd_reqs);
+		STAILQ_REMOVE_HEAD(&so->so_snd_reqs, sndr_entry);
+		(*(sndr->sndr_complete))(sndr->sndr_context, STATUS_INVALID_CONNECTION, 0);
+		ExFreePool(sndr);
 	}
 }
 
@@ -1698,13 +2036,13 @@ SCTPProcessReceiveEvent(
     struct socket *so)
 {
 	NTSTATUS status;
+	NTSTATUS rcvStatus;
 	int error = 0;
 	int flags;
 	struct uio uio;
 	struct mbuf *control = NULL;
 
 	struct mbuf *m = NULL, *n = NULL;
-	TDI_STATUS rcvStatus;
 	unsigned int bytesTaken, offset;
 	int length;
 
@@ -1973,6 +2311,22 @@ SCTPDeliverDatagram(
 		}
 	}
 	DbgPrint("SCTPDeliverDatagram: leave\n");
+}
+
+int
+soabort(
+    struct socket *so)
+{
+	int error = 0;
+	DbgPrint("soabort: enter\n");
+
+	error = sctp_abort(so);
+
+	SOCK_LOCK(so);
+	so->so_error= ECONNRESET;
+	SCTPNotifyDisconnect(so);
+	SOCK_UNLOCK(so);
+	return 0;
 }
 
 

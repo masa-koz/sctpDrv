@@ -2860,7 +2860,7 @@ sctp_notify_assoc_change(uint16_t event, struct sctp_tcb *stcb,
 	 */
 	if (((stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_TCPTYPE) ||
 	     (stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_IN_TCPPOOL)) &&
-	    ((event == SCTP_COMM_LOST) || (event ==SCTP_SHUTDOWN_COMP)) ) {
+	    ((event == SCTP_CANT_STR_ASSOC) || (event == SCTP_COMM_LOST) || (event ==SCTP_SHUTDOWN_COMP)) ) {
 		if (SCTP_GET_STATE(&stcb->asoc) == SCTP_STATE_COOKIE_WAIT)
 			stcb->sctp_socket->so_error = ECONNREFUSED;
 		else

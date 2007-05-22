@@ -4269,7 +4269,7 @@ sctp_connect(struct socket *so, struct sockaddr *addr, struct thread *p)
 static int
 sctp_connect(struct socket *so, struct sockaddr *addr, struct proc *p)
 {
-#elif defined(__Panda__)
+#elif defined(__Panda__) || defined(__Windows__)
 int
 sctp_connect(struct socket *so, struct sockaddr *addr)
 {
