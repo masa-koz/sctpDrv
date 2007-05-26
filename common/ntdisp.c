@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: ntdisp.c,v 1.11 2007/05/22 04:37:39 kozuka Exp $
+ * $Id: ntdisp.c,v 1.12 2007/05/26 19:06:14 kozuka Exp $
  */
 #include "globals.h"
 
@@ -66,16 +66,21 @@ NTSTATUS SCTPConnect(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPDisconnect(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPDispatchSend(IN PIRP, IN PIO_STACK_LOCATION);
 
-NTSTATUS SCTPReceiveDatagram(IN PIRP, IN PIO_STACK_LOCATION);
-NTSTATUS SCTPReceiveDatagramCommon(IN PSCTP_SOCKET, IN PSCTP_DGRCV_REQUEST, OUT ULONG *);
+NTSTATUS SCTPDispatchReceiveDatagram(IN PIRP, IN PIO_STACK_LOCATION);
+NTSTATUS SCTPReceiveDatagram(IN PSCTP_SOCKET, IN PSCTP_DGRCV_REQUEST);
 void SCTPCancelReceiveDatagram(IN PSCTP_SOCKET, IN PVOID);
 void SCTPDeliverData(struct socket *);
-void SCTPNotifyDisconnect(struct socket *);
-void SCTPProcessReceiveEvent(struct socket *);
+void SCTPDeliverDataEvent(struct socket *);
 void SCTPDeliverDatagram(struct socket *);
+void SCTPDeliverDatagramEvent(struct socket *);
+void SCTPNotifyDisconnect(struct socket *);
 
-NTSTATUS SCTPSendDatagram(IN PIRP, IN PIO_STACK_LOCATION);
+NTSTATUS SCTPDispatchSend(IN PIRP, IN PIO_STACK_LOCATION);
+NTSTATUS SCTPDispatchSendDatagram(IN PIRP, IN PIO_STACK_LOCATION);
+NTSTATUS SCTPSendDatagram(IN PSCTP_SOCKET, IN PSCTP_DGSND_REQUEST);
 void SCTPCancelSendDatagram(IN PSCTP_SOCKET, IN PVOID);
+void SCTPNotifySend(struct socket *);
+void SCTPNotifySendDatagram(struct socket *);
 
 NTSTATUS SCTPSetEventHandler(IN PIRP, IN PIO_STACK_LOCATION);
 NTSTATUS SCTPQueryInformation(IN PIRP, IN PIO_STACK_LOCATION);
@@ -155,12 +160,6 @@ SCTPCancelRequest(
 	case TDI_RECEIVE_DATAGRAM:
 		SCTPCancelReceiveDatagram(sctpContext->socket, irp);
 		break;
-
-	case TDI_DISASSOCIATE_ADDRESS:
-		break;
-
-	case TDI_SEND:
-	case TDI_RECEIVE:
 	default:
 		KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
 		soabort(sctpContext->socket);
@@ -426,9 +425,7 @@ SCTPCleanup(
 		so = sctpContext->socket;
 		if (so != NULL) {
 			KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
-			if (so->so_pcb != NULL) {
-				error = sctp_detach(so);
-			}
+			error = sctp_detach(so);
 			SOCK_LOCK(so);
 			sofree(so);
 			KeLowerIrql(oldIrql);
@@ -590,11 +587,11 @@ SCTPDispatchInternalDeviceControl(
 		DbgPrint("SCTPDispatchInternalDeviceControl: TDI_TRANSPORT_ADDRESS_FILE,MinorFunction=%X\n", irpSp->MinorFunction);
 		switch (irpSp->MinorFunction) {
 		case TDI_RECEIVE_DATAGRAM:
-			status = SCTPReceiveDatagram(irp, irpSp);
+			status = SCTPDispatchReceiveDatagram(irp, irpSp);
 			DbgPrint("SCTPDispatchInternalDeviceControl: leave #2.1\n");
 			return status;
 		case TDI_SEND_DATAGRAM:
-			status = SCTPSendDatagram(irp, irpSp);
+			status = SCTPDispatchSendDatagram(irp, irpSp);
 			DbgPrint("SCTPDispatchInternalDeviceControl: leave #2.2\n");
 			return status;
 		case TDI_SET_EVENT_HANDLER:
@@ -864,7 +861,7 @@ SCTPConnect(
 	struct socket *so = NULL;
 	PTRANSPORT_ADDRESS tAddr = NULL;
 	struct sockaddr *addr = NULL;
-	PSCTP_CONN_REQUEST cnr = NULL;
+	PSCTP_CONN_REQUEST connr = NULL;
 	PLARGE_INTEGER timeout = NULL;
 
 	DbgPrint("SCTPConnect: enter\n");
@@ -921,21 +918,21 @@ SCTPConnect(
 		return status;
 	}
 
-	cnr = ExAllocatePool(NonPagedPool, sizeof(*cnr));
-	if (cnr == NULL) {
+	connr = ExAllocatePool(NonPagedPool, sizeof(*connr));
+	if (connr == NULL) {
 		status = STATUS_INSUFFICIENT_RESOURCES;
 		DbgPrint("SCTPConnect: leave #4\n");
 		goto done;
 	}
-	RtlZeroMemory(cnr, sizeof(*cnr));
+	RtlZeroMemory(connr, sizeof(*connr));
 
-	cnr->cnr_complete = SCTPRequestComplete;
-	cnr->cnr_context = irp;
-	cnr->cnr_conninfo = returnInformation;
+	connr->conn_complete = SCTPRequestComplete;
+	connr->conn_context = irp;
+	connr->conn_conninfo = returnInformation;
 
 	KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
 	SOCK_LOCK(so);
-	so->so_conn_req = cnr;
+	so->so_conn_req = connr;
 	so->so_conn_ctx = sctpContext->connCtx;
 	SOCK_UNLOCK(so);
 
@@ -970,7 +967,7 @@ SCTPDisconnect(
 	PSCTP_DRIVER_CONTEXT sctpContext;
 	struct socket *so = NULL;
 	struct sctp_inpcb *inp = NULL;
-	PSCTP_CONN_REQUEST cnr = NULL;
+	PSCTP_CONN_REQUEST connr = NULL;
 	PLARGE_INTEGER timeout = NULL;
 
 	DbgPrint("SCTPDisconnect: enter\n");
@@ -1013,20 +1010,20 @@ SCTPDisconnect(
 		return status;
 	}
 
-	cnr = ExAllocatePool(NonPagedPool, sizeof(*cnr));
-	if (cnr == NULL) {
+	connr = ExAllocatePool(NonPagedPool, sizeof(*connr));
+	if (connr == NULL) {
 		status = STATUS_INSUFFICIENT_RESOURCES;
 		DbgPrint("SCTPDisconnect: leave #6\n");
 		goto done;
 	}
-	RtlZeroMemory(cnr, sizeof(*cnr));
+	RtlZeroMemory(connr, sizeof(*connr));
 
-	cnr->cnr_complete = SCTPRequestComplete;
-	cnr->cnr_context = irp;
+	connr->conn_complete = SCTPRequestComplete;
+	connr->conn_context = irp;
 
 	KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
 	SOCK_LOCK(so);
-	so->so_disconn_req = cnr;
+	so->so_disconn_req = connr;
 	SOCK_UNLOCK(so);
 
 	error = sctp_disconnect(so);
@@ -1060,7 +1057,7 @@ SCTPDispatchSend(
 	PSCTP_DRIVER_CONTEXT sctpContext;
 	struct socket *so = NULL;
 	struct uio uio;
-	ULONG sentLength = 0;
+	ULONG sendLength = 0, sentLength = 0;
 	PSCTP_SND_REQUEST sndr = NULL;
 
 	DbgPrint("SCTPDispatchSend: enter\n");
@@ -1087,38 +1084,39 @@ SCTPDispatchSend(
 	uio.uio_rw = UIO_WRITE;
 
 	KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
+
 	error = sctp_sosend(so, NULL, &uio, NULL, NULL, MSG_NBIO, NULL);
 	DbgPrint("SCTPDispatchSend: sctp_sosend=%d\n", error);
+
 	if (error == 0) {
-		sentLength = sendRequest->SendLength;
+		sentLength = sendRequest->SendLength;;
 		status = STATUS_SUCCESS;
+	} else if (error == EWOULDBLOCK && (sendRequest->SendFlags & TDI_SEND_NON_BLOCKING) != 0) {
+		status = STATUS_DEVICE_NOT_READY;
 	} else if (error == EWOULDBLOCK) {
 		sndr = ExAllocatePool(NonPagedPool, sizeof(*sndr));
-		if (sndr == NULL) {
-			status = STATUS_INSUFFICIENT_RESOURCES;
-			DbgPrint("SCTPDispatchSend: leave #3.1\n");
-			goto done;
-		}
 		RtlZeroMemory(sndr, sizeof(*sndr));
 
-		sndr->sndr_complete = SCTPRequestComplete;
-		sndr->sndr_context = irp;
-		sndr->sndr_buffer = irp->MdlAddress;
-		sndr->sndr_size = sendRequest->SendLength;
+		sndr->snd_complete = SCTPRequestComplete;
+		sndr->snd_context = irp;
+		sndr->snd_buffer = irp->MdlAddress;
+		sndr->snd_size = sendRequest->SendLength;
 
 		SOCK_LOCK(so);
-		STAILQ_INSERT_TAIL(&so->so_snd_reqs, sndr, sndr_entry);
+		STAILQ_INSERT_TAIL(&so->so_snd_reqs, sndr, snd_entry);
 		SOCK_UNLOCK(so);
-		KeLowerIrql(oldIrql);
+
 		status = STATUS_PENDING;
 	} else {
 		status = STATUS_INVALID_CONNECTION;
 	}
-done:
+
 	if (status != STATUS_PENDING) {
 		SCTPRequestComplete(irp, status, sentLength);
 	}
+
 	KeLowerIrql(oldIrql);
+
 	DbgPrint("SCTPDispatchSend: leave\n");
 	return STATUS_PENDING;
 
@@ -1132,18 +1130,19 @@ done1:
 
 
 NTSTATUS
-SCTPReceiveDatagram(
+SCTPDispatchReceiveDatagram(
     IN PIRP irp,
     IN PIO_STACK_LOCATION irpSp)
 {
 	NTSTATUS status;
+	KIRQL oldIrql;
 	PSCTP_DRIVER_CONTEXT sctpContext;
 	PTDI_REQUEST_KERNEL_RECEIVEDG datagramInformation;
 	struct socket *so = NULL;
-	PSCTP_DGRCV_REQUEST drr = NULL;
+	PSCTP_DGRCV_REQUEST dgrcvr = NULL;
 	ULONG receivedLength = 0;
 
-	DbgPrint("SCTPReceiveDatagram: enter\n");
+	DbgPrint("SCTPDispatchReceiveDatagram: enter\n");
 	sctpContext = (PSCTP_DRIVER_CONTEXT)irpSp->FileObject->FsContext;
 	datagramInformation = (PTDI_REQUEST_KERNEL_RECEIVEDG)&irpSp->Parameters;
 
@@ -1152,41 +1151,42 @@ SCTPReceiveDatagram(
 	status = SCTPPrepareIrpForCancel(sctpContext, irp, SCTPCancelRequest);
 	if (status != STATUS_SUCCESS) {
 		/* This IRP canceled. */
-		DbgPrint("SCTPReceiveDatagram: leave #1\n");
+		DbgPrint("SCTPDispatchReceiveDatagram: leave #1\n");
 		return status;
 	}
 
-	drr = ExAllocatePool(NonPagedPool, sizeof(*drr));
-	RtlZeroMemory(drr, sizeof(*drr));
+	dgrcvr = ExAllocatePool(NonPagedPool, sizeof(*dgrcvr));
+	RtlZeroMemory(dgrcvr, sizeof(*dgrcvr));
 
-	drr->drr_conninfo = datagramInformation->ReturnDatagramInformation;
-	drr->drr_complete = SCTPRequestComplete;
-	drr->drr_context = irp;
-	drr->drr_buffer = irp->MdlAddress;
-	drr->drr_size = datagramInformation->ReceiveLength;
+	dgrcvr->dgrcv_conninfo = datagramInformation->ReturnDatagramInformation;
+	dgrcvr->dgrcv_complete = SCTPRequestComplete;
+	dgrcvr->dgrcv_context = irp;
+	dgrcvr->dgrcv_buffer = irp->MdlAddress;
+	dgrcvr->dgrcv_size = datagramInformation->ReceiveLength;
 
-	status = SCTPReceiveDatagramCommon(sctpContext->socket, drr, &receivedLength);
+	KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
 
-	if (status == STATUS_PENDING) {
-		SOCK_LOCK(so);
-		STAILQ_INSERT_TAIL(&so->so_dgrcv_reqs, drr, drr_entry);
-		SOCK_UNLOCK(so);
+	status = SCTPReceiveDatagram(sctpContext->socket, dgrcvr);
+	if (status != STATUS_PENDING) {
+		ExFreePool(dgrcvr);
 	} else {
-		ExFreePool(drr);
-		SCTPRequestComplete(irp, status, receivedLength);
+		SOCK_LOCK(so);
+		STAILQ_INSERT_TAIL(&so->so_dgrcv_reqs, dgrcvr, dgrcv_entry);
+		SOCK_UNLOCK(so);
 	}
 
-	DbgPrint("SCTPReceiveDatagram: leave\n");
+	KeLowerIrql(oldIrql);
+
+	DbgPrint("SCTPDispatchReceiveDatagram: leave\n");
 	return STATUS_PENDING;
 }
 
 NTSTATUS
-SCTPReceiveDatagramCommon(
+SCTPReceiveDatagram(
     IN PSCTP_SOCKET socket,
-    IN PSCTP_DGRCV_REQUEST drr,
-    OUT ULONG *receivedLength)
+    IN PSCTP_DGRCV_REQUEST dgrcvr)
 {
-	NTSTATUS status;
+	NTSTATUS status = STATUS_SUCCESS;
 	struct socket *so = socket;
 	struct uio uio;
 	struct mbuf *control = NULL;
@@ -1194,65 +1194,57 @@ SCTPReceiveDatagramCommon(
 	int flags;
 	int error = 0;
 
-	DbgPrint("TdiReceiveDatagramCommon: leave\n");
+	DbgPrint("SCTPReceiveDatagram: leave\n");
 
 	RtlZeroMemory(&uio, sizeof(uio));
-	uio.uio_buffer = drr->drr_buffer;
-	uio.uio_resid = drr->drr_size;
+	uio.uio_buffer = dgrcvr->dgrcv_buffer;
+	uio.uio_resid = dgrcvr->dgrcv_size;
 	uio.uio_rw = UIO_READ;
 
 	flags = MSG_DONTWAIT;
 	error = sctp_soreceive(so, &from, &uio, NULL, &control, &flags);
+
 	if (error == EWOULDBLOCK) {
-		DbgPrint("TdiReceiveDatagramCommon: leave #1\n");
-		return STATUS_PENDING;
+		DbgPrint("SCTPReceiveDatagram: leave #1\n");
 	}
 
 	if (error == 0) {
-		if (from != NULL && drr->drr_conninfo != NULL) {
-			if (convertsockaddr(drr->drr_conninfo->RemoteAddress, &drr->drr_conninfo->RemoteAddressLength, from) < 0) {
-				drr->drr_conninfo->RemoteAddressLength = 0;
+		if (from != NULL && dgrcvr->dgrcv_conninfo != NULL) {
+			if (convertsockaddr(dgrcvr->dgrcv_conninfo->RemoteAddress,
+				&dgrcvr->dgrcv_conninfo->RemoteAddressLength, from) < 0) {
+				dgrcvr->dgrcv_conninfo->RemoteAddress = NULL;
+				dgrcvr->dgrcv_conninfo->RemoteAddressLength = 0;
 			}
 		}
 
-		if (control != NULL &&
-		    drr->drr_conninfo != NULL &&
-		    drr->drr_conninfo->OptionsLength >= SCTP_BUF_LEN(control)) {
-			RtlCopyMemory(drr->drr_conninfo->Options, SCTP_BUF_AT(control, 0),
-			    SCTP_BUF_LEN(control));
-			drr->drr_conninfo->OptionsLength = SCTP_BUF_LEN(control);
+		if (control != NULL && dgrcvr->dgrcv_conninfo != NULL) {
+			if (dgrcvr->dgrcv_conninfo->OptionsLength >= SCTP_BUF_LEN(control)) {
+				RtlCopyMemory(dgrcvr->dgrcv_conninfo->Options, SCTP_BUF_AT(control, 0),
+				    SCTP_BUF_LEN(control));
+				dgrcvr->dgrcv_conninfo->OptionsLength = SCTP_BUF_LEN(control);
+			} else {
+				dgrcvr->dgrcv_conninfo->Options = NULL;
+				dgrcvr->dgrcv_conninfo->OptionsLength = 0;
+			}
 		}
 
-		if (receivedLength != NULL) {
-			*receivedLength = (ULONG)uio.uio_offset;
-		} else {
-			(*(drr->drr_complete))(drr->drr_context, STATUS_SUCCESS, (ULONG)uio.uio_offset);
-		}
-
-		if (from != NULL) {
-			ExFreePool(from);
-		}
-
-		if (control != NULL) {
-			m_freem(control);
-		}
-		DbgPrint("TdiReceiveDatagramCommon: leave #2\n");
-		return STATUS_SUCCESS;
+		(*(dgrcvr->dgrcv_complete))(dgrcvr->dgrcv_context, STATUS_SUCCESS, (ULONG)uio.uio_offset);
+		status = STATUS_SUCCESS;
+	} else if (error == EWOULDBLOCK) {
+		status = STATUS_PENDING;
 	} else {
-		if (receivedLength != NULL) {
-			*receivedLength = 0;
-		} else {
-			(*(drr->drr_complete))(drr->drr_context, STATUS_INVALID_PARAMETER, 0);
-		}
-		if (from != NULL) {
-			ExFreePool(from);
-		}
-		if (control != NULL) {
-			m_freem(control);
-		}
-		DbgPrint("TdiReceiveDatagramCommon: leave #3\n");
-		return STATUS_INVALID_PARAMETER;
+		(*(dgrcvr->dgrcv_complete))(dgrcvr->dgrcv_context, STATUS_INVALID_PARAMETER, 0);
+		status = STATUS_INVALID_PARAMETER;
 	}
+
+	if (from != NULL) {
+		ExFreePool(from);
+	}
+	if (control != NULL) {
+		m_freem(control);
+	}
+
+	return status;
 }
 
 void
@@ -1261,30 +1253,32 @@ SCTPCancelReceiveDatagram(
     IN PVOID context)
 {
 	struct socket *so = socket;
-	PSCTP_DGRCV_REQUEST drr, drr_tmp;
+	PSCTP_DGRCV_REQUEST dgrcvr, dgrcvr_tmp;
 
 	DbgPrint("SCTPCancelReceiveDatagram: enter\n");
+
 	SOCK_LOCK(so);
-	STAILQ_FOREACH_SAFE(drr, &so->so_dgrcv_reqs, drr_entry, drr_tmp) {
-		if (drr->drr_context != context) {
+	/* Find out requests for a canceling IRP. */
+	STAILQ_FOREACH_SAFE(dgrcvr, &so->so_dgrcv_reqs, dgrcv_entry, dgrcvr_tmp) {
+		if (dgrcvr->dgrcv_context != context) {
 			continue;
 		}
-		STAILQ_REMOVE(&so->so_dgrcv_reqs, drr, sctp_dgrcv_request, drr_entry);
+		STAILQ_REMOVE(&so->so_dgrcv_reqs, dgrcvr, sctp_dgrcv_request, dgrcv_entry);
 		break;
 	}
 	SOCK_UNLOCK(so);
 
-	DbgPrint("SCTPCancelReceiveDatagram: drr=%p\n", drr);
-	if (drr != NULL) {
-		(*(drr->drr_complete))(drr->drr_context, STATUS_CANCELLED, 0);
-		ExFreePool(drr);
+	DbgPrint("SCTPCancelReceiveDatagram: dgrcvr=%p\n", dgrcvr);
+	if (dgrcvr != NULL) {
+		(*(dgrcvr->dgrcv_complete))(dgrcvr->dgrcv_context, STATUS_CANCELLED, 0);
+		ExFreePool(dgrcvr);
 	}
 	DbgPrint("SCTPCancelReceiveDatagram: leave\n");
 }
 
 
 NTSTATUS
-SCTPSendDatagram(
+SCTPDispatchSendDatagram(
     IN PIRP irp,
     IN PIO_STACK_LOCATION irpSp)
 {
@@ -1294,33 +1288,23 @@ SCTPSendDatagram(
 	PTDI_REQUEST_KERNEL_SENDDG datagramInformation;
 	PTDI_CONNECTION_INFORMATION sendDatagramInformation;
 
+	int error = 0;
 	struct socket *so = NULL;
 	struct sockaddr *addr = NULL;
 	struct mbuf *control = NULL;
 	struct uio uio;
-	PSCTP_DGSND_REQUEST dsr;
-	ULONG sentLength = 0;
-	int error = 0;
+	PSCTP_DGSND_REQUEST dgsndr = NULL;
 
-	DbgPrint("SCTPSendDatagram: enter\n");
+	DbgPrint("SCTPDispatchSendDatagram: enter\n");
 	sctpContext = (PSCTP_DRIVER_CONTEXT)irpSp->FileObject->FsContext;
 	datagramInformation = (PTDI_REQUEST_KERNEL_SENDDG)&irpSp->Parameters;
 
 	status = SCTPPrepareIrpForCancel(sctpContext, irp, SCTPCancelRequest);
 	if (status != STATUS_SUCCESS) {
 		/* This IRP canceled. */
-		DbgPrint("SCTPSendDatagram: leave #1\n");
+		DbgPrint("SCTPDispatchSendDatagram: leave #1\n");
 		return status;
 	}
-
-	KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
-
-	so = sctpContext->socket;
-
-	RtlZeroMemory(&uio, sizeof(uio));
-	uio.uio_buffer = irp->MdlAddress;
-	uio.uio_resid = datagramInformation->SendLength;
-	uio.uio_rw = UIO_WRITE;
 
 	sendDatagramInformation = datagramInformation->SendDatagramInformation;
 	if (sendDatagramInformation->RemoteAddressLength > sizeof(TA_ADDRESS)) {
@@ -1330,69 +1314,112 @@ SCTPSendDatagram(
 			if (error < 0) {
 				addr = NULL;
 				status = STATUS_INSUFFICIENT_RESOURCES;
-				goto done;
+				goto error;
 			}
 		}
 	}
 
-	if (so->so_options & SO_USECONTROL) {
-		 control = sctp_get_mbuf_for_msg(CMSG_SPACE(sizeof(struct sctp_sndrcvinfo)),
+	RtlZeroMemory(&uio, sizeof(uio));
+	uio.uio_buffer = irp->MdlAddress;
+	uio.uio_resid = datagramInformation->SendLength;
+	uio.uio_rw = UIO_WRITE;
+
+	if (sctpContext->socket->so_options & SO_USECONTROL) {
+		control = sctp_get_mbuf_for_msg(CMSG_SPACE(sizeof(struct sctp_sndrcvinfo)),
 		    0,
 		    M_DONTWAIT,
 		    1,
 		    MT_SONAME);
 		if (control != NULL) {
+
 			uiomove(SCTP_BUF_AT(control, 0), CMSG_SPACE(sizeof(struct sctp_sndrcvinfo)), &uio);
 			SCTP_BUF_LEN(control) = CMSG_SPACE(sizeof(struct sctp_sndrcvinfo));
 		}
 	}
 
-	error = sctp_sosend(so, addr, &uio, NULL, control, MSG_NBIO, NULL);
-	DbgPrint("TdiSendDatagram: sctp_sosend=%d\n", error);
-	if (error != EWOULDBLOCK) {
-		if (error == 0) {
-			status = STATUS_SUCCESS;
-		} else {
-			status = STATUS_INVALID_PARAMETER; /* XXX */
-		}
-		SCTPRequestComplete(irp, status, sentLength);
-		DbgPrint("TdiSendDatagram: leave #1\n");
-		goto done;
-	}
-
-	dsr = ExAllocatePool(NonPagedPool, sizeof(*dsr));
-	if (dsr == NULL) {
-		DbgPrint("TdiSendDatagram: leave #2\n");
+	dgsndr = ExAllocatePool(NonPagedPool, sizeof(*dgsndr));
+	if (dgsndr == NULL) {
+		DbgPrint("SCTPDispatchSendDatagram: leave #2\n");
 		status = STATUS_INSUFFICIENT_RESOURCES;
-		goto done;
+		goto error;
 	}
-	RtlZeroMemory(dsr, sizeof(*dsr));
+	RtlZeroMemory(dgsndr, sizeof(*dgsndr));
 
-	dsr->dsr_conninfo = sendDatagramInformation;
-	dsr->dsr_complete = SCTPRequestComplete;
-	dsr->dsr_context = irp;
-	dsr->dsr_buffer = irp->MdlAddress;
-	dsr->dsr_size = datagramInformation->SendLength;
-	dsr->dsr_addr = addr;
+	dgsndr->dgsnd_conninfo = sendDatagramInformation;
+	dgsndr->dgsnd_complete = SCTPRequestComplete;
+	dgsndr->dgsnd_context = irp;
+	dgsndr->dgsnd_buffer = uio.uio_buffer;
+	dgsndr->dgsnd_size = uio.uio_resid;
+	dgsndr->dgsnd_offset = uio.uio_offset;
+	dgsndr->dgsnd_addr = addr;
+	dgsndr->dgsnd_control = control;
 
-	SOCKBUF_LOCK(&so->so_snd);
-	STAILQ_INSERT_TAIL(&so->so_dgsnd_reqs, dsr, dsr_entry);
-	SOCKBUF_UNLOCK(&so->so_snd);
+	KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
 
-	DbgPrint("TdiSendDatagram: leave\n");
+	status = SCTPSendDatagram(sctpContext->socket, dgsndr);
+	if (status != STATUS_PENDING) {
+		if (dgsndr->dgsnd_addr != NULL) {
+			ExFreePool(dgsndr->dgsnd_addr);
+		}
+		if (dgsndr->dgsnd_control != NULL) {
+			sctp_m_freem(dgsndr->dgsnd_control);
+		}
+		ExFreePool(dgsndr);
+	} else {
+		SOCK_LOCK(so);
+		STAILQ_INSERT_TAIL(&so->so_dgsnd_reqs, dgsndr, dgsnd_entry);
+		SOCK_UNLOCK(so);
+	}
 
 	KeLowerIrql(oldIrql);
-	return STATUS_PENDING;
 
-done:
+	return STATUS_PENDING;
+error:
+	SCTPRequestComplete(irp, status, 0);
+
 	if (addr != NULL) {
 		ExFreePool(addr);
 	}
-	KeLowerIrql(oldIrql);
+	if (control != NULL) {
+		sctp_m_freem(control);
+	}
 
-	DbgPrint("TdiSendDatagram: leave #0\n");
+	DbgPrint("SCTPDispatchSendDatagram: leave #0\n");
 	return STATUS_PENDING;
 }
+
+NTSTATUS
+SCTPSendDatagram(
+    IN PSCTP_SOCKET socket,
+    IN PSCTP_DGSND_REQUEST dgsndr)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	int error = 0;
+	struct socket *so = socket;
+	struct uio uio;
+
+	RtlZeroMemory(&uio, sizeof(uio));
+	uio.uio_buffer = dgsndr->dgsnd_buffer;
+	uio.uio_resid = dgsndr->dgsnd_size;
+	uio.uio_offset = dgsndr->dgsnd_offset;
+	uio.uio_rw = UIO_WRITE;
+
+	error = sctp_sosend(so, dgsndr->dgsnd_addr, &uio, NULL, dgsndr->dgsnd_control, MSG_NBIO, NULL);
+	DbgPrint("SCTPDispatchSendDatagram: sctp_sosend=%d\n", error);
+
+	if (error == 0) {
+		(*(dgsndr->dgsnd_complete))(dgsndr->dgsnd_context, STATUS_SUCCESS, dgsndr->dgsnd_size);
+		status = STATUS_SUCCESS;
+	} else if (error == EWOULDBLOCK) {
+		status = STATUS_PENDING;
+	} else {
+		(*(dgsndr->dgsnd_complete))(dgsndr->dgsnd_context, STATUS_INVALID_PARAMETER, 0);
+		status = STATUS_INVALID_PARAMETER;
+	}
+
+	return status;
+}
+
 
 void
 SCTPCancelSendDatagram(
@@ -1400,23 +1427,23 @@ SCTPCancelSendDatagram(
     IN PVOID context)
 {
 	struct socket *so = socket;
-	PSCTP_DGSND_REQUEST dsr, dsr_tmp;
+	PSCTP_DGSND_REQUEST dgsndr, dgsndr_tmp;
 
 	DbgPrint("SCTPCancelSendDatagram: enter\n");
-	SOCKBUF_LOCK(&so->so_snd);
-	STAILQ_FOREACH_SAFE(dsr, &so->so_dgsnd_reqs, dsr_entry, dsr_tmp) {
-		if (dsr->dsr_context != context) {
+	SOCK_LOCK(so);
+	STAILQ_FOREACH_SAFE(dgsndr, &so->so_dgsnd_reqs, dgsnd_entry, dgsndr_tmp) {
+		if (dgsndr->dgsnd_context != context) {
 			continue;
 		}
-		STAILQ_REMOVE(&so->so_dgsnd_reqs, dsr, sctp_dgsnd_request, dsr_entry);
+		STAILQ_REMOVE(&so->so_dgsnd_reqs, dgsndr, sctp_dgsnd_request, dgsnd_entry);
 		break;
 	}
 	SOCKBUF_UNLOCK(&so->so_snd);
 
-	DbgPrint("SCTPCancelSendDatagram: dsr=%p\n", dsr);
-	if (dsr != NULL) {
-		(*(dsr->dsr_complete))(dsr->dsr_context, STATUS_CANCELLED, 0);
-		ExFreePool(dsr);
+	DbgPrint("SCTPCancelSendDatagram: dgsndr=%p\n", dgsndr);
+	if (dgsndr != NULL) {
+		(*(dgsndr->dgsnd_complete))(dgsndr->dgsnd_context, STATUS_CANCELLED, 0);
+		ExFreePool(dgsndr);
 	}
 	DbgPrint("SCTPCancelReceiveDatagram: leave\n");
 }
@@ -1427,7 +1454,7 @@ SCTPSetEventHandler(
     IN PIRP irp,
     IN PIO_STACK_LOCATION irpSp)
 {
-	NTSTATUS status;
+	NTSTATUS status = STATUS_SUCCESS;
 	KIRQL oldIrql;
 	PSCTP_DRIVER_CONTEXT sctpContext;
 	PTDI_REQUEST_KERNEL_SET_EVENT event;
@@ -1444,30 +1471,32 @@ SCTPSetEventHandler(
 	DbgPrint("SCTPSetEventHandler: EventType=%X\n", event->EventType);
 	switch (event->EventType) {
 	case TDI_EVENT_CONNECT:
-		status = STATUS_SUCCESS;
 		so->so_qlimit = 1;
 		so->so_conn = event->EventHandler;
 		so->so_connarg = event->EventContext;
-		break;
-	case TDI_EVENT_RECEIVE:
-		so->so_rcv_event = event->EventHandler;
-		so->so_rcv_arg = event->EventContext;
 		break;
 	case TDI_EVENT_DISCONNECT:
 		so->so_disconn_event = event->EventHandler;
 		so->so_disconn_arg = event->EventContext;
 		break;
 	case TDI_EVENT_ERROR:
-	case TDI_EVENT_CHAINED_RECEIVE:
-		status = STATUS_SUCCESS;
+		so->so_error_event = event->EventHandler;
+		so->so_error_arg = event->EventContext;
 		break;
-
+	case TDI_EVENT_RECEIVE:
+		so->so_rcv_event = event->EventHandler;
+		so->so_rcv_arg = event->EventContext;
+		break;
 	case TDI_EVENT_RECEIVE_DATAGRAM:
 		so->so_rcvdg = event->EventHandler;
 		so->so_rcvdgarg = event->EventContext;
 		status = STATUS_SUCCESS;
 		break;
-
+	case TDI_EVENT_SEND_POSSIBLE:
+		so->so_sndnotify_event = event->EventHandler;
+		so->so_sndnotify_arg = event->EventContext;
+		break;
+	case TDI_EVENT_CHAINED_RECEIVE:
 	default:
 		status = TDI_BAD_EVENT_TYPE;
 		break;
@@ -1661,7 +1690,6 @@ soalloc(void)
 	STAILQ_INIT(&so->so_assoc_conns);
 	STAILQ_INIT(&so->so_conn_reqs);
 #endif
-	STAILQ_INIT(&so->so_snd_reqs);
 	STAILQ_INIT(&so->so_dgrcv_reqs);
 	STAILQ_INIT(&so->so_dgsnd_reqs);
 	TAILQ_INIT(&so->so_incomp);
@@ -1719,14 +1747,6 @@ sofree(
 		sofree(so1);
 	}
 
-	while (!STAILQ_EMPTY(&so->so_snd_reqs)) {
-		DbgPrint("sofree: #4\n");
-		sndr = STAILQ_FIRST(&so->so_snd_reqs);
-		STAILQ_REMOVE_HEAD(&so->so_snd_reqs, sndr_entry);
-		(*(sndr->sndr_complete))(sndr->sndr_context, STATUS_INVALID_CONNECTION, 0);
-		ExFreePool(sndr);
-	}
-
 	SOCKBUF_LOCK(&so->so_snd);
 
 	SOCKBUF_LOCK_DESTROY(&so->so_rcv);
@@ -1777,7 +1797,7 @@ soisconnected(
 	NTSTATUS status;
 	int error = 0;
 	struct socket *head = NULL;
-	struct sctp_conn_request *cnr = NULL;
+	struct sctp_conn_request *connr = NULL;
 	PIRP irp = NULL;
 	PIO_STACK_LOCATION irpSp = NULL;
 	PSCTP_DRIVER_CONTEXT sctpContext = NULL;
@@ -1795,9 +1815,6 @@ soisconnected(
 	PTDI_REQUEST_KERNEL_ACCEPT acceptRequest;
 	PTDI_REQUEST_KERNEL_CONNECT connectRequest;
 	PTDI_CONNECTION_INFORMATION requestInformation, returnInformation;
-#if 0
-	PSCTP_ASSOC_CONN asc = NULL;
-#endif
 
 	DbgPrint("soisconnected: enter\n");
 	SOCK_LOCK(so);
@@ -1906,8 +1923,8 @@ soisconnected(
 #endif
 		}
 	} else if (so->so_conn_req != NULL) {
-		cnr = so->so_conn_req;
-		returnInformation = cnr->cnr_conninfo;
+		connr = so->so_conn_req;
+		returnInformation = connr->conn_conninfo;
 
 		if (returnInformation != NULL && returnInformation->RemoteAddressLength > sizeof(TRANSPORT_ADDRESS)) {
 			inp = (struct sctp_inpcb *)so->so_pcb;
@@ -1936,8 +1953,8 @@ soisconnected(
 			returnInformation->RemoteAddressLength = 0;
 		}
 
-		(*(cnr->cnr_complete))(cnr->cnr_context, STATUS_SUCCESS, 0);
-		ExFreePool(cnr);
+		(*(connr->conn_complete))(connr->conn_context, STATUS_SUCCESS, 0);
+		ExFreePool(connr);
 		so->so_conn_req = NULL;
 	}
 	SOCK_UNLOCK(so);
@@ -1974,9 +1991,24 @@ void
 SCTPDeliverData(
     struct socket *so)
 {
+#if 0
+	NTSTATUS status = STATUS_SUCCESS;
+	PSCTP_DGRCV_REQUEST dgrcvr = NULL, dgrcvr_temp = NULL;
+
+	STAILQ_FOREACH_SAFE(dgrcvr, &so->so_dgrcv_reqs, dgrcv_entry, dgrcv_temp) {
+		status = SCTPReceiveData(so, dgrcvr);
+		if (status != STATUS_PENDING) {
+			STAILQ_REMOVE(&so->so_dgrcv_reqs, dgrcvr, sctp_dgrcv_request, dgrcv_entry);
+			ExFreePool(dgrcvr);
+		}
+		if (status != STATUS_SUCCESS) {
+			break;
+		}
+	}
+#endif
 	while (so->so_rcv.sb_cc > 0 && so->so_rcv_event != NULL) {
 		DbgPrint("SCTPDeliverData: #1\n");
-		SCTPProcessReceiveEvent(so);
+		SCTPDeliverDataEvent(so);
 	}
 
 	DbgPrint("SCTPDeliverData: so_error=%d,so_rcv.sb_cc=%d\n", so->so_error, so->so_rcv.sb_cc);
@@ -1986,53 +2018,7 @@ SCTPDeliverData(
 }
 
 void
-SCTPNotifyDisconnect(
-    struct socket *so)
-{
-	PSCTP_CONN_REQUEST cnr = NULL;
-	PSCTP_SND_REQUEST sndr = NULL;
-	NTSTATUS disconnStatus;
-
-	DbgPrint("SCTPNotifyDisconnect: enter\n");
-
-	if (so->so_conn_req != NULL) {
-		DbgPrint("SCTPNotifyDisconnect: #1\n");
-		cnr = so->so_conn_req;
-		(*(cnr->cnr_complete))(cnr->cnr_context, TDI_CONN_REFUSED, 0);
-		ExFreePool(cnr);
-		so->so_conn_req = NULL;
-	}
-
-	if (so->so_disconn_req != NULL) {
-		DbgPrint("SCTPNotifyDisconnect: #2.1\n");
-		cnr = so->so_disconn_req;
-		(*(cnr->cnr_complete))(cnr->cnr_context, STATUS_SUCCESS, 0);
-		ExFreePool(cnr);
-		so->so_disconn_req = NULL;
-	} else if (so->so_disconn_event != NULL) {
-		DbgPrint("SCTPNotifyDisconnect: #2.2\n");
-		disconnStatus = (*(so->so_disconn_event))(
-		    so->so_disconn_arg,
-		    so->so_conn_ctx,
-		    0,
-		    NULL,
-		    0,
-		    NULL,
-		    so->so_error == ECONNREFUSED ? TDI_DISCONNECT_RELEASE : TDI_DISCONNECT_ABORT);
-		DbgPrint("SCTPNotifyDisconnect: disconnStatus=%X\n", disconnStatus);
-	}
-
-	while (!STAILQ_EMPTY(&so->so_snd_reqs)) {
-		DbgPrint("SCTPNotifyDisconnect: #3\n");
-		sndr = STAILQ_FIRST(&so->so_snd_reqs);
-		STAILQ_REMOVE_HEAD(&so->so_snd_reqs, sndr_entry);
-		(*(sndr->sndr_complete))(sndr->sndr_context, STATUS_INVALID_CONNECTION, 0);
-		ExFreePool(sndr);
-	}
-}
-
-void
-SCTPProcessReceiveEvent(
+SCTPDeliverDataEvent(
     struct socket *so)
 {
 	NTSTATUS status;
@@ -2050,16 +2036,13 @@ SCTPProcessReceiveEvent(
 	PIO_STACK_LOCATION irpSp;
 	PTDI_REQUEST_KERNEL_RECEIVE information;
 
-	DbgPrint("SCTPProcessReceiveEvent: enter\n");
+	DbgPrint("SCTPDeliverDataEvent: enter\n");
 
 	flags = MSG_DONTWAIT;
 	error = sctp_soreceive(so, NULL, NULL, &m, &control, &flags);
-	if (error == EWOULDBLOCK) {
-		DbgPrint("SCTPProcessReceiveEvent: leave #1\n");
-		goto done;
-	}
+
 	if (error != 0 || m == NULL) {
-		DbgPrint("SCTPProcessReceiveEvent: leave #2\n");
+		DbgPrint("SCTPDeliverDataEvent: leave #1\n");
 		goto done;
 	}
 
@@ -2128,13 +2111,84 @@ SCTPProcessReceiveEvent(
 		IoCompleteRequest(irp, 2);
 	}
 done:
+	if (m != NULL) {
+		sctp_m_freem(m);
+	}
 	if (control != NULL) {
-		m_freem(control);
+		sctp_m_freem(control);
 	}
 }
 
 void
+SCTPNotifyDisconnect(
+    struct socket *so)
+{
+	PSCTP_CONN_REQUEST connr = NULL;
+	PSCTP_SND_REQUEST sndr = NULL;
+	NTSTATUS disconnStatus;
+
+	DbgPrint("SCTPNotifyDisconnect: enter\n");
+
+	if (so->so_conn_req != NULL) {
+		DbgPrint("SCTPNotifyDisconnect: #1\n");
+		connr = so->so_conn_req;
+		(*(connr->conn_complete))(connr->conn_context, TDI_CONN_REFUSED, 0);
+		ExFreePool(connr);
+		so->so_conn_req = NULL;
+	}
+
+	if (so->so_disconn_req != NULL) {
+		DbgPrint("SCTPNotifyDisconnect: #2.1\n");
+		connr = so->so_disconn_req;
+		(*(connr->conn_complete))(connr->conn_context, STATUS_SUCCESS, 0);
+		ExFreePool(connr);
+		so->so_disconn_req = NULL;
+	} else if (so->so_disconn_event != NULL) {
+		DbgPrint("SCTPNotifyDisconnect: #2.2\n");
+		disconnStatus = (*(so->so_disconn_event))(
+		    so->so_disconn_arg,
+		    so->so_conn_ctx,
+		    0,
+		    NULL,
+		    0,
+		    NULL,
+		    so->so_error == ECONNREFUSED ? TDI_DISCONNECT_RELEASE : TDI_DISCONNECT_ABORT);
+		DbgPrint("SCTPNotifyDisconnect: disconnStatus=%X\n", disconnStatus);
+	}
+
+}
+
+void
 SCTPDeliverDatagram(
+    struct socket *so)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	PSCTP_DGRCV_REQUEST dgrcvr = NULL;
+	DbgPrint("SCTPDeliverDatagram: enter\n");
+
+	while ((!STAILQ_EMPTY(&so->so_dgrcv_reqs)) && so->so_rcv.sb_cc > 0) {
+		DbgPrint("SCTPDeliverDatagram: #1\n");
+		dgrcvr = STAILQ_FIRST(&so->so_dgrcv_reqs);
+
+		status = SCTPReceiveDatagram(so, dgrcvr);
+		if (status != STATUS_PENDING) {
+			STAILQ_REMOVE_HEAD(&so->so_dgrcv_reqs, dgrcv_entry);
+			ExFreePool(dgrcvr);
+		}
+		if (status != STATUS_SUCCESS) {
+			break;
+		}
+	}
+
+	while (so->so_rcv.sb_cc > 0 && so->so_rcvdg != NULL) {
+		DbgPrint("SCTPDeliverDatagram: #2-1\n");
+		SCTPDeliverDatagramEvent(so);
+	}
+	DbgPrint("SCTPDeliverDatagram: leave\n");
+}
+
+void
+SCTPDeliverDatagramEvent(
     struct socket *so)
 {
 	NTSTATUS status;
@@ -2145,7 +2199,6 @@ SCTPDeliverDatagram(
 	struct mbuf *control = NULL;
 	struct wsacmsghdr *msghdr = NULL;
 
-	PSCTP_DGRCV_REQUEST drr;
 	struct mbuf *m = NULL, *n = NULL;
 	TDI_STATUS rcvdgStatus;
 	unsigned int bytesTaken, offset;
@@ -2163,154 +2216,126 @@ SCTPDeliverDatagram(
 	PTDI_REQUEST_KERNEL_RECEIVEDG datagramInformation;
 	PTDI_CONNECTION_INFORMATION returnDatagramInformation;
 
-	DbgPrint("SCTPDeliverDatagram: enter\n");
+	flags = MSG_DONTWAIT;
+	error = sctp_soreceive(so, &from, NULL, &m, &control, &flags);
 
-	while ((!STAILQ_EMPTY(&so->so_dgrcv_reqs)) &&
-	       so->so_rcv.sb_cc > 0) {
-		DbgPrint("SCTPDeliverDatagram: #1\n");
-		drr = STAILQ_FIRST(&so->so_dgrcv_reqs);
-
-		status = SCTPReceiveDatagramCommon(so, drr, NULL);
-		if (status == STATUS_PENDING) {
-			break;
-		}
-		STAILQ_REMOVE_HEAD(&so->so_dgrcv_reqs, drr_entry);
-		ExFreePool(drr);
+	if (error != 0 || m == NULL) {
+		DbgPrint("SCTPDeliverDatagram: leave #2-1-1\n");
+		goto done;
 	}
 
-	if (so->so_rcvdg != NULL) {
-		DbgPrint("SCTPDeliverDatagram: #2\n");
-		while (so->so_rcv.sb_cc > 0) {
-			DbgPrint("SCTPDeliverDatagram: #2-1\n");
-			flags = MSG_DONTWAIT;
-			error = sctp_soreceive(so, &from, NULL, &m, &control, &flags);
-			if (error == EWOULDBLOCK) {
-				DbgPrint("SCTPDeliverDatagram: leave #2-1-1\n");
-				break;
-			}
-			if (error != 0 || m == NULL) {
-				if (from != NULL) {
-					ExFreePool(from);
-				}
-				if (control != NULL) {
-					m_freem(control);
-				}
-				continue;
-			}
+	length = 0;
+	n = m;
+	while (n != NULL) {
+		length += SCTP_BUF_LEN(n);
+		n = SCTP_BUF_NEXT(n);
+	}
+	DbgPrint("SCTPDeliverDatagram: length=%d, LEN=%d\n", length, SCTP_BUF_LEN(m));
 
-			length = 0;
-			n = m;
-			while (n != NULL) {
-				length += SCTP_BUF_LEN(n);
-				n = SCTP_BUF_NEXT(n);
-			}
-			DbgPrint("SCTPDeliverDatagram: length=%d, LEN=%d\n", length, SCTP_BUF_LEN(m));
+	if (from != NULL) {
+		tAddr = (PTRANSPORT_ADDRESS)&taAddr;
+		tAddrLength = sizeof(taAddr);
+		if (convertsockaddr(tAddr, &tAddrLength, from) < 0) {
+			tAddr = NULL;
+			tAddrLength = 0;
+		}
+	}
 
-			if (from != NULL) {
-				tAddr = (PTRANSPORT_ADDRESS)&taAddr;
-				tAddrLength = sizeof(taAddr);
-				if (convertsockaddr(tAddr, &tAddrLength, from) < 0) {
-					tAddr = NULL;
-					tAddrLength = 0;
-				}
-			}
+	if (so->so_options & SO_USECONTROL) {
+		rcvdgStatus = (*(so->so_rcvdg))(
+		    so->so_rcvdgarg,
+		    tAddrLength,
+		    tAddr,
+		    0,
+		    NULL,
+		    TDI_RECEIVE_COPY_LOOKAHEAD,
+		    SCTP_BUF_LEN(control),
+		    SCTP_BUF_LEN(control) + length,
+		    &bytesTaken,
+		    SCTP_BUF_AT(control, 0),
+		    &irp);
+	} else {
+		rcvdgStatus = (*(so->so_rcvdg))(
+		    so->so_rcvdgarg,
+		    tAddrLength,
+		    tAddr,
+		    0,
+		    NULL,
+		    ((length > SCTP_BUF_LEN(m)) ? TDI_RECEIVE_COPY_LOOKAHEAD : TDI_RECEIVE_ENTIRE_MESSAGE),
+		    SCTP_BUF_LEN(m),
+		    length,
+		    &bytesTaken,
+		    SCTP_BUF_AT(m, 0),
+		    &irp);
+	}
 
-			if (so->so_options & SO_USECONTROL) {
-				rcvdgStatus = (*(so->so_rcvdg))(
-				    so->so_rcvdgarg,
-				    tAddrLength,
-				    tAddr,
-				    0,
-				    NULL,
-				    TDI_RECEIVE_COPY_LOOKAHEAD,
-				    SCTP_BUF_LEN(control),
-				    SCTP_BUF_LEN(control) + length,
-				    &bytesTaken,
-				    SCTP_BUF_AT(control, 0),
-				    &irp);
+	DbgPrint("SCTPDeliverDatagram: rcvdgStatus=%X,bytesTaken=%d\n", rcvdgStatus, bytesTaken);
+	if (rcvdgStatus == STATUS_MORE_PROCESSING_REQUIRED) {
+		DbgPrint("SCTPDeliverDatagram: #2-1-1-1\n");
+
+		irpSp = IoGetCurrentIrpStackLocation(irp);
+		datagramInformation = (PTDI_REQUEST_KERNEL_RECEIVEDG)&irpSp->Parameters;
+		returnDatagramInformation = datagramInformation->ReturnDatagramInformation;
+
+		if (returnDatagramInformation != NULL) {
+			if (tAddr != NULL &&
+			    (ULONG)returnDatagramInformation->RemoteAddressLength >= tAddrLength) {
+				RtlCopyMemory(returnDatagramInformation->RemoteAddress,
+				    tAddr, tAddrLength);
+				returnDatagramInformation->RemoteAddressLength =
+				    ((PTA_ADDRESS)&tAddr->Address[0])->AddressLength;
 			} else {
-				rcvdgStatus = (*(so->so_rcvdg))(
-				    so->so_rcvdgarg,
-				    tAddrLength,
-				    tAddr,
-				    0,
-				    NULL,
-				    ((length > SCTP_BUF_LEN(m)) ? TDI_RECEIVE_COPY_LOOKAHEAD : TDI_RECEIVE_ENTIRE_MESSAGE),
-				    SCTP_BUF_LEN(m),
-				    length,
-				    &bytesTaken,
-				    SCTP_BUF_AT(m, 0),
-				    &irp);
+				returnDatagramInformation->RemoteAddress = NULL;
+				returnDatagramInformation->RemoteAddressLength = 0;
 			}
-
-			DbgPrint("SCTPDeliverDatagram: rcvdgStatus=%X,bytesTaken=%d\n", rcvdgStatus, bytesTaken);
-			if (rcvdgStatus == STATUS_MORE_PROCESSING_REQUIRED) {
-				DbgPrint("SCTPDeliverDatagram: #2-1-1-1\n");
-
-				irpSp = IoGetCurrentIrpStackLocation(irp);
-				datagramInformation = (PTDI_REQUEST_KERNEL_RECEIVEDG)&irpSp->Parameters;
-				returnDatagramInformation = datagramInformation->ReturnDatagramInformation;
-
-				if (returnDatagramInformation != NULL) {
-					if (tAddr != NULL &&
-					    (ULONG)returnDatagramInformation->RemoteAddressLength >= tAddrLength) {
-						RtlCopyMemory(returnDatagramInformation->RemoteAddress,
-						    tAddr, tAddrLength);
-						returnDatagramInformation->RemoteAddressLength =
-						    ((PTA_ADDRESS)&tAddr->Address[0])->AddressLength;
-					} else {
-						returnDatagramInformation->RemoteAddress = NULL;
-						returnDatagramInformation->RemoteAddressLength = 0;
-					}
 
 #if 0
-					if (control != NULL &&
-					    returnDatagramInformation->OptionsLength >= SCTP_BUF_LEN(control)) {
-						RtlCopyMemory(returnDatagramInformation->Options,
-						    SCTP_BUF_AT(control, 0), SCTP_BUF_LEN(control));
-					} else {
-						returnDatagramInformation->Options = NULL;
-						returnDatagramInformation->OptionsLength = 0;
-					}
+			if (control != NULL &&
+			    returnDatagramInformation->OptionsLength >= SCTP_BUF_LEN(control)) {
+				RtlCopyMemory(returnDatagramInformation->Options,
+				    SCTP_BUF_AT(control, 0), SCTP_BUF_LEN(control));
+			} else {
+				returnDatagramInformation->Options = NULL;
+				returnDatagramInformation->OptionsLength = 0;
+			}
 #endif
-				}
-
-				RtlZeroMemory(&uio, sizeof(uio));
-				uio.uio_buffer = irp->MdlAddress;
-				uio.uio_resid = datagramInformation->ReceiveLength;
-				uio.uio_rw = UIO_READ;
-				offset = bytesTaken;
-
-				if (so->so_options & SO_USECONTROL) {
-					if (offset < (ULONG)SCTP_BUF_LEN(control)) {
-						uiomove(SCTP_BUF_AT(control, offset), SCTP_BUF_LEN(control) - offset, &uio);
-					}
-					offset = 0;
-				}
-
-				n = m;
-				do {
-					uiomove(SCTP_BUF_AT(n, offset), SCTP_BUF_LEN(n) - offset, &uio);
-					offset = 0;
-					n = SCTP_BUF_NEXT(n);
-				} while (n != NULL);
-
-				irp->IoStatus.Information = length - bytesTaken;
-				if (so->so_options & SO_USECONTROL) {
-					irp->IoStatus.Information += SCTP_BUF_LEN(control);
-				}
-				irp->IoStatus.Status = STATUS_SUCCESS;
-				IoCompleteRequest(irp, 2);
-			}
-			if (from != NULL) {
-				ExFreePool(from);
-			}
-			if (control != NULL) {
-				m_freem(control);
-			}
 		}
+
+		RtlZeroMemory(&uio, sizeof(uio));
+		uio.uio_buffer = irp->MdlAddress;
+		uio.uio_resid = datagramInformation->ReceiveLength;
+		uio.uio_rw = UIO_READ;
+		offset = bytesTaken;
+
+		if (so->so_options & SO_USECONTROL) {
+			if (offset < (ULONG)SCTP_BUF_LEN(control)) {
+				uiomove(SCTP_BUF_AT(control, offset), SCTP_BUF_LEN(control) - offset, &uio);
+			}
+			offset = 0;
+		}
+
+		n = m;
+		do {
+			uiomove(SCTP_BUF_AT(n, offset), SCTP_BUF_LEN(n) - offset, &uio);
+			offset = 0;
+			n = SCTP_BUF_NEXT(n);
+		} while (n != NULL);
+
+		irp->IoStatus.Information = length - bytesTaken;
+		if (so->so_options & SO_USECONTROL) {
+			irp->IoStatus.Information += SCTP_BUF_LEN(control);
+		}
+		irp->IoStatus.Status = STATUS_SUCCESS;
+		IoCompleteRequest(irp, 2);
 	}
-	DbgPrint("SCTPDeliverDatagram: leave\n");
+
+done:
+	if (from != NULL) {
+		ExFreePool(from);
+	}
+	if (control != NULL) {
+		sctp_m_freem(control);
+	}
 }
 
 int
@@ -2334,56 +2359,96 @@ void
 sowwakeup_locked(
     struct socket *so)
 {
-	int error = 0;
-	NTSTATUS status = STATUS_SUCCESS;
-	struct uio uio;
-	PSCTP_DGSND_REQUEST dsr;
-	struct mbuf *control = NULL;
+	struct sctp_inpcb *inp = NULL;
 
-	DbgPrint("sowwakeup: enter\n");
-	while ((!STAILQ_EMPTY(&so->so_dgsnd_reqs))) {
-		dsr = STAILQ_FIRST(&so->so_dgsnd_reqs);
-		if (dsr == NULL) {
-			break;
+	DbgPrint("sowwakeup_locked: enter\n");
+	switch (so->so_type) {
+	case SOCK_STREAM:
+		inp = (struct sctp_inpcb *)so->so_pcb;
+		if (inp != NULL &&
+		    ((inp->sctp_flags & SCTP_PCB_FLAGS_CONNECTED) != 0)) {
+			SCTPNotifySend(so);
 		}
-		DbgPrint("sowwakeup: dsr=%p\n", dsr);
+		break;
+	case SOCK_DGRAM:
+		SCTPNotifySendDatagram(so);
+		break;
+	}
+
+	SOCKBUF_UNLOCK(&so->so_snd);
+	DbgPrint("sowwakeup_locked: leave\n");
+}
+
+void
+SCTPNotifySend(
+    struct socket *so)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	PSCTP_SND_REQUEST sndr = NULL;
+	struct uio uio;
+	int error = 0;
+
+	DbgPrint("SCTPNotifySend: enter\n");
+
+	while ((!STAILQ_EMPTY(&so->so_snd_reqs)) && so->so_snd.sb_mbmax - so->so_snd.sb_cc > 0) {
+		sndr = STAILQ_FIRST(&so->so_snd_reqs);
 
 		RtlZeroMemory(&uio, sizeof(uio));
-		uio.uio_buffer = dsr->dsr_buffer;
-		uio.uio_resid = dsr->dsr_size;
+		uio.uio_buffer = sndr->snd_buffer;
+		uio.uio_resid = sndr->snd_size;
 		uio.uio_rw = UIO_WRITE;
 
-		if (so->so_options & SO_USECONTROL) {
-			 control = sctp_get_mbuf_for_msg(CMSG_SPACE(sizeof(struct sctp_sndrcvinfo)),
-			    0,
-			    M_DONTWAIT,
-			    1,
-			    MT_SONAME);
-			if (control != NULL) {
-				uiomove(SCTP_BUF_AT(control, 0), CMSG_SPACE(sizeof(struct sctp_sndrcvinfo)), &uio);
-				SCTP_BUF_LEN(control) = CMSG_SPACE(sizeof(struct sctp_sndrcvinfo));
+		error = sctp_sosend(so, NULL, &uio, NULL, NULL, MSG_NBIO, NULL);
+		if (error != EWOULDBLOCK) {
+			if (error == 0) {
+				(*(sndr->snd_complete))(sndr->snd_context, STATUS_SUCCESS, sndr->snd_size);
+			} else {
+				(*(sndr->snd_complete))(sndr->snd_context, STATUS_INVALID_PARAMETER, 0);
 			}
-		}
-
-		error = sctp_sosend(so, dsr->dsr_addr, &uio, NULL, control, MSG_NBIO, NULL);
-		DbgPrint("sorwakeup: sctp_sosend=%d\n", error);
-		if (error == EWOULDBLOCK) {
+			STAILQ_REMOVE(&so->so_snd_reqs, sndr, sctp_snd_request, snd_entry);
+			ExFreePool(sndr);
+		} else {
 			break;
 		}
-		
-		STAILQ_REMOVE_HEAD(&so->so_dgsnd_reqs, dsr_entry);
-		if (error == 0) {
-			(*(dsr->dsr_complete))(dsr->dsr_context, STATUS_SUCCESS, (ULONG)uio.uio_offset);
-		} else {
-			(*(dsr->dsr_complete))(dsr->dsr_context, STATUS_INVALID_PARAMETER, (ULONG)uio.uio_offset); /* XXX */
-		}
-		if (dsr->dsr_addr != NULL) {
-			ExFreePool(dsr->dsr_addr);
-		}
-		ExFreePool(dsr);
 	}
-	SOCKBUF_UNLOCK(&so->so_snd);
-	DbgPrint("sowwakeup: leave\n");
+
+	SOCK_LOCK(so);
+	if (so->so_sndnotify_event != NULL && so->so_conn_ctx != NULL) {
+		DbgPrint("SCTPNotifySend: #1\n");
+
+		status = (*(so->so_sndnotify_event))(so->so_sndnotify_arg,
+		    so->so_conn_ctx,
+		    so->so_snd.sb_mbmax - so->so_snd.sb_cc);
+
+		DbgPrint("SCTPNotifySend: status=%X\n", status);
+	}
+	SOCK_UNLOCK(so);
+
+	DbgPrint("SCTPNotifySend: leave\n");
+}
+
+void
+SCTPNotifySendDatagram(
+    struct socket *so)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	PSCTP_DGSND_REQUEST dgsndr = NULL;
+
+	DbgPrint("SCTPNotifySendDatagram: enter\n");
+
+	while ((!STAILQ_EMPTY(&so->so_dgsnd_reqs)) && so->so_snd.sb_mbmax - so->so_snd.sb_cc > 0) {
+		dgsndr = STAILQ_FIRST(&so->so_dgsnd_reqs);
+
+		status = SCTPSendDatagram(so, dgsndr);
+		if (status != STATUS_PENDING) {
+			STAILQ_REMOVE(&so->so_dgsnd_reqs, dgsndr, sctp_dgsnd_request, dgsnd_entry);
+			ExFreePool(dgsndr);
+		} else {
+			break;
+		}
+	}
+
+	DbgPrint("SCTPNotifySendDatagram: leave\n");
 }
 
 int
