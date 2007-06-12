@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: wshsctp.c,v 1.2 2007/05/15 03:36:42 kozuka Exp $
+ * $Id: wshsctp.c,v 1.3 2007/06/12 00:26:01 kozuka Exp $
  */
 
 #define UNICODE
@@ -30,19 +30,19 @@
 #include <devioctl.h>
 #include <windows.h>
 
+#include <wchar.h>
+#include <ctype.h>
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <wsahelp.h>
+
+#include <basetyps.h>
+#include <nspapi.h>
+#include <nspapip.h>
+
 typedef LONG NTSTATUS;
 typedef NTSTATUS *PNTSTATUS;
-
-
-typedef struct _UNICODE_STRING {
-	USHORT Length;
-	USHORT MaximumLength;
-#ifdef MIDL_PASS
-	[size_is(MaximumLength / 2), length_is((Length) / 2) ] USHORT * Buffer;
-#else // MIDL_PASS
-	PWSTR  Buffer;
-#endif // MIDL_PASS
-} UNICODE_STRING;
 typedef UNICODE_STRING *PUNICODE_STRING;
 #define UNICODE_NULL ((WCHAR)0) // winnt
 
@@ -96,19 +96,7 @@ if (!(exp)) \
 #define ASSERTMSG(msg, exp)
 #endif // DBG
 
-
-#include <wchar.h>
-#include <ctype.h>
-
 #include <tdi.h>
-
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <wsahelp.h>
-
-#include <basetyps.h>
-#include <nspapi.h>
-#include <nspapip.h>
 
 
 #define IPPROTO_SCTP			132

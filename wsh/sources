@@ -2,23 +2,21 @@ TARGETNAME=wshsctp
 TARGETPATH=obj
 TARGETTYPE=DYNLINK
 
-TARGETLIBS=$(SDK_LIB_PATH)\kernel32.lib \
+DLLENTRY=_DllMainCRTStartup
+USE_MSVCRT=1
+
+TARGETLIBS=$(SDK_LIB_PATH)\ntoskrnl.lib \
+           $(SDK_LIB_PATH)\kernel32.lib \
            $(SDK_LIB_PATH)\advapi32.lib \
            $(SDK_LIB_PATH)\wsock32.lib \
            $(DDK_LIB_PATH)\tdi.lib \
            $(SDK_LIB_PATH)\user32.lib  
 
-DLLENTRY=_DllMainCRTStartup
-
-USE_CRTDLL=1
 
 INCLUDES=..\inc;$(BASEDIR)\src\network\inc
-
-USE_CRTDLL=1
 
 SOURCES=wshsctp.c \
         wshsctp.rc
 
 UMTYPE=console
 DLLBASE=0x400000
-
