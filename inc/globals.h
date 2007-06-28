@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: globals.h,v 1.5 2007/05/13 08:28:27 kozuka Exp $
+ * $Id: globals.h,v 1.6 2007/06/28 13:47:16 kozuka Exp $
  */
 
 /*-
@@ -286,6 +286,7 @@ struct in6_pktinfo {
 /*
  * Socket address, internet style.
  */
+#include <packon.h>
 struct sockaddr_in {
 	u_short	sin_len;
 	u_short	sin_family;
@@ -293,6 +294,8 @@ struct sockaddr_in {
 	struct in_addr sin_addr;
 	char	sin_zero[8];
 };
+#include <packoff.h>
+
 #define	AF_INET		TDI_ADDRESS_TYPE_IP
 
 struct sockaddr_in6 {
