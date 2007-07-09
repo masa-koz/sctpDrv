@@ -21,7 +21,7 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- * $Id: sctp_os_windows.h,v 1.7 2007/05/22 04:39:51 kozuka Exp $
+ * $Id: sctp_os_windows.h,v 1.8 2007/07/09 16:49:16 kozuka Exp $
  */
 #ifndef __sctp_os_windows_h__
 #define __sctp_os_windows_h__
@@ -139,41 +139,43 @@ STAILQ_HEAD(sctp_assoc_conn_head, sctp_assoc_conn);
 #endif
 
 typedef struct sctp_conn_request {
-	PTDI_CONNECTION_INFORMATION cnr_conninfo;
-	LARGE_INTEGER cnr_timeout;
-	RequestCompleteRoutine cnr_complete;
-	PVOID cnr_context;
+	PTDI_CONNECTION_INFORMATION conn_conninfo;
+	LARGE_INTEGER conn_timeout;
+	RequestCompleteRoutine conn_complete;
+	PVOID conn_context;
 } SCTP_CONN_REQUEST, *PSCTP_CONN_REQUEST;
 
 typedef struct sctp_snd_request {
-	STAILQ_ENTRY(sctp_snd_request) sndr_entry;
-	PNDIS_BUFFER sndr_buffer;
-	ULONG sndr_size;
-	RequestCompleteRoutine sndr_complete;
-	PVOID sndr_context;
+	STAILQ_ENTRY(sctp_snd_request) snd_entry;
+	PNDIS_BUFFER snd_buffer;
+	ULONG snd_size;
+	RequestCompleteRoutine snd_complete;
+	PVOID snd_context;
 } SCTP_SND_REQUEST, *PSCTP_SND_REQUEST;
 STAILQ_HEAD(sctp_snd_request_head, sctp_snd_request);
 
 typedef struct sctp_dgrcv_request {
-	BOOLEAN drr_queued;
-	STAILQ_ENTRY(sctp_dgrcv_request) drr_entry;
-	PNDIS_BUFFER drr_buffer;
-	ULONG drr_size;
-	PTDI_CONNECTION_INFORMATION drr_conninfo;
-	RequestCompleteRoutine drr_complete;
-	PVOID drr_context;
+	BOOLEAN dgrcv_queued;
+	STAILQ_ENTRY(sctp_dgrcv_request) dgrcv_entry;
+	PNDIS_BUFFER dgrcv_buffer;
+	ULONG dgrcv_size;
+	PTDI_CONNECTION_INFORMATION dgrcv_conninfo;
+	RequestCompleteRoutine dgrcv_complete;
+	PVOID dgrcv_context;
 } SCTP_DGRCV_REQUEST, *PSCTP_DGRCV_REQUEST;
 STAILQ_HEAD(sctp_dgrcv_request_head, sctp_dgrcv_request);
 
 typedef struct sctp_dgsnd_request {
-	BOOLEAN dsr_queued;
-	STAILQ_ENTRY(sctp_dgsnd_request) dsr_entry;
-	PNDIS_BUFFER dsr_buffer;
-	ULONG dsr_size;
-	struct sockaddr *dsr_addr;
-	PTDI_CONNECTION_INFORMATION dsr_conninfo;
-	RequestCompleteRoutine dsr_complete;
-	PVOID dsr_context;
+	BOOLEAN dgsnd_queued;
+	STAILQ_ENTRY(sctp_dgsnd_request) dgsnd_entry;
+	PNDIS_BUFFER dgsnd_buffer;
+	ULONG dgsnd_size;
+	uint64_t dgsnd_offset;
+	struct sockaddr *dgsnd_addr;
+	struct mbuf *dgsnd_control;
+	PTDI_CONNECTION_INFORMATION dgsnd_conninfo;
+	RequestCompleteRoutine dgsnd_complete;
+	PVOID dgsnd_context;
 } SCTP_DGSND_REQUEST, *PSCTP_DGSND_REQUEST;
 STAILQ_HEAD(sctp_dgsnd_request_head, sctp_dgsnd_request);
 
@@ -279,6 +281,10 @@ struct socket {
 	PTDI_IND_RECEIVE		so_rcv_event;
 	void				*so_rcv_arg;
 	struct sctp_snd_request_head	so_snd_reqs;
+	PTDI_IND_SEND_POSSIBLE		so_sndnotify_event;
+	void				*so_sndnotify_arg;
+	PTDI_IND_ERROR			so_error_event;
+	void				*so_error_arg;
 	struct sctp_dgrcv_request_head	so_dgrcv_reqs;
 	PTDI_IND_RECEIVE_DATAGRAM	so_rcvdg;
 	void				*so_rcvdgarg;
@@ -675,7 +681,7 @@ typedef struct sctp_os_timer {
 
 VOID CustomTimerDpc(IN struct _KDPC *, IN PVOID, IN PVOID, IN PVOID);
 
-#define SCTP_OS_TIMER_INIT(_tmr)
+#define SCTP_OS_TIMER_INIT(_tmr)	RtlZeroMemory((_tmr), sizeof(*(_tmr)))
 
 #define SCTP_OS_TIMER_START(_tmr, _ticks, _func, _arg) do { \
 	DbgPrint("SCTP_OS_TIMER_START: tmr=%p,active=%d,pending=%d,on=%d %s[%d]\n", (_tmr), (_tmr)->active, (_tmr)->pending, KeReadStateTimer(&(_tmr)->tmr), __FILE__, __LINE__); \
