@@ -11,5 +11,5 @@ TARGETLIBS= \
 #C_DEFINES=-DNTVERSION=$(NTVERSION) -D__Windows__ -D_KERNEL -DLOCKDEBUG=0
 C_DEFINES=-DNTVERSION=$(NTVERSION) -D__Windows__ -D_KERNEL -DLOCKDEBUG=1
 MSC_WARNING_LEVEL=/W3 /WX
-INCLUDES=..\;..\inc;..\algrthms;..\subr;$(BASEDIR)\inc;$(BASEDIR)\src\network\inc
+INCLUDES=..\;..\inc;..\algrthms;..\subr;$(DDK_INC_PATH)
 SOURCES= ntinit.c ntdisp.c if.c route.c
