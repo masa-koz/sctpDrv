@@ -66,7 +66,7 @@
  * When working with the global SCTP lists we lock and unlock the INP_INFO
  * lock. So when we go to lookup an association we will want to do a
  * SCTP_INP_INFO_RLOCK() and then when we want to add a new association to
- * the sctppcbinfo list's we will do a SCTP_INP_INFO_WLOCK().
+ * the SCTP_BASE_INFO() list's we will do a SCTP_INP_INFO_WLOCK().
  */
 extern struct sctp_foo_stuff sctp_logoff[];
 extern int sctp_logoff_stuff;
@@ -80,9 +80,7 @@ extern LARGE_INTEGER zero_timeout;
 #define SCTP_STATLOG_LOCK()
 #define SCTP_STATLOG_UNLOCK()
 #define SCTP_STATLOG_GETREF(x) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_STATLOG_GETREF: %s[%d]\n", __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_STATLOG_GETREF: %s[%d]\n", __FILE__, __LINE__); \
 	(x) = atomic_fetchadd_int(&global_sctp_cwnd_log_at, 1); \
 	if ((x) == SCTP_STAT_LOG_SIZE) { \
 		global_sctp_cwnd_log_at = 1; \
@@ -92,103 +90,82 @@ extern LARGE_INTEGER zero_timeout;
 } while (0)
 
 #define SCTP_INP_INFO_LOCK_INIT() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_INFO_LOCK_INIT: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeInitializeSpinLock(&sctppcbinfo.ipi_ep_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_INFO_LOCK_INIT: %s[%d]\n", __FILE__, __LINE__); \
+	KeInitializeSpinLock(&SCTP_BASE_INFO(ipi_ep_lock)); \
 } while (0)
 
 #define SCTP_INP_INFO_LOCK_DESTROY() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_INFO_LOCK_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&sctppcbinfo.ipi_ep_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_INFO_LOCK_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
 } while (0)
 
 #define SCTP_INP_INFO_RLOCK() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_INFO_RLOCK: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeAcquireSpinLockAtDpcLevel(&sctppcbinfo.ipi_ep_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_INFO_RLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeAcquireSpinLockAtDpcLevel(&SCTP_BASE_INFO(ipi_ep_lock)); \
 } while (0)
 
 #define SCTP_INP_INFO_WLOCK() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_INFO_WLOCK: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeAcquireSpinLockAtDpcLevel(&sctppcbinfo.ipi_ep_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_INFO_WLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeAcquireSpinLockAtDpcLevel(&SCTP_BASE_INFO(ipi_ep_lock)); \
 } while (0)
 
 #define SCTP_INP_INFO_RUNLOCK() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_INFO_RUNLOCK: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&sctppcbinfo.ipi_ep_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_INFO_RUNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeReleaseSpinLockFromDpcLevel(&SCTP_BASE_INFO(ipi_ep_lock)); \
 } while (0)
 
 #define SCTP_INP_INFO_WUNLOCK() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_INFO_WUNLOCK: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&sctppcbinfo.ipi_ep_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_INFO_WUNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeReleaseSpinLockFromDpcLevel(&SCTP_BASE_INFO(ipi_ep_lock)); \
 } while (0)
 
 
 #define SCTP_IPI_ADDR_INIT() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_IPI_ADDR_INIT: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeInitializeSpinLock(&sctppcbinfo.ipi_addr_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_IPI_ADDR_INIT: %s[%d]\n", __FILE__, __LINE__); \
+	KeInitializeSpinLock(&SCTP_BASE_INFO(ipi_addr_lock)); \
 } while (0)
 
 #define SCTP_IPI_ADDR_DESTROY() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_IPI_ADDR_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&sctppcbinfo.ipi_addr_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_IPI_ADDR_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
 } while (0)
 
-#define SCTP_IPI_ADDR_LOCK() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_IPI_ADDR_LOCK: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeAcquireSpinLockAtDpcLevel(&sctppcbinfo.ipi_addr_lock); \
+#define SCTP_IPI_ADDR_RLOCK() do { \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_IPI_ADDR_RLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeAcquireSpinLockAtDpcLevel(&SCTP_BASE_INFO(ipi_addr_lock)); \
 } while (0)
 
-#define SCTP_IPI_ADDR_UNLOCK() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_IPI_ADDR_UNLOCK: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&sctppcbinfo.ipi_addr_lock); \
+#define SCTP_IPI_ADDR_WLOCK() do { \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_IPI_ADDR_WLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeAcquireSpinLockAtDpcLevel(&SCTP_BASE_INFO(ipi_addr_lock)); \
 } while (0)
 
+#define SCTP_IPI_ADDR_RUNLOCK() do { \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_IPI_ADDR_RUNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeReleaseSpinLockFromDpcLevel(&SCTP_BASE_INFO(ipi_addr_lock)); \
+} while (0)
+
+
+#define SCTP_IPI_ADDR_WUNLOCK() do { \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_IPI_ADDR_WUNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeReleaseSpinLockFromDpcLevel(&SCTP_BASE_INFO(ipi_addr_lock)); \
+} while (0)
 
 #define SCTP_IPI_ITERATOR_WQ_INIT() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_IPI_ITERATOR_WQ_INIT: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeInitializeSpinLock(&sctppcbinfo.ipi_iterator_wq_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_IPI_ITERATOR_WQ_INIT: %s[%d]\n", __FILE__, __LINE__); \
+	KeInitializeSpinLock(&SCTP_BASE_INFO(ipi_iterator_wq_lock)); \
 } while (0)
 
 #define SCTP_IPI_ITERATOR_WQ_DESTROY() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_IPI_ITERATOR_WQ_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&sctppcbinfo.ipi_iterator_wq_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_IPI_ITERATOR_WQ_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
 } while (0)
 
 #define SCTP_IPI_ITERATOR_WQ_LOCK() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_IPI_ITERATOR_WQ_LOCK: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeAcquireSpinLockAtDpcLevel(&sctppcbinfo.ipi_iterator_wq_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_IPI_ITERATOR_WQ_LOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeAcquireSpinLockAtDpcLevel(&SCTP_BASE_INFO(ipi_iterator_wq_lock)); \
 } while (0)
 
 #define SCTP_IPI_ITERATOR_WQ_UNLOCK() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_IPI_ITERATOR_WQ_UNLOCK: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&sctppcbinfo.ipi_iterator_wq_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_IPI_ITERATOR_WQ_UNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeReleaseSpinLockFromDpcLevel(&SCTP_BASE_INFO(ipi_iterator_wq_lock)); \
 } while (0)
 
 
@@ -199,146 +176,105 @@ extern LARGE_INTEGER zero_timeout;
  */
 
 #define SCTP_INP_READ_INIT(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_READ_INIT: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_READ_INIT: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	KeInitializeSpinLock(&(_inp)->inp_rdata_lock); \
 } while (0)
 
 #define SCTP_INP_READ_DESTROY(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_READ_DESTROY: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&(_inp)->inp_rdata_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_READ_DESTROY: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 } while (0)
 
 #define SCTP_INP_READ_LOCK(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_READ_LOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_READ_LOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	KeAcquireSpinLockAtDpcLevel(&(_inp)->inp_rdata_lock); \
 } while (0)
 
 #define SCTP_INP_READ_UNLOCK(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_READ_UNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_READ_UNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	KeReleaseSpinLockFromDpcLevel(&(_inp)->inp_rdata_lock); \
 } while (0)
 
 
 #define SCTP_INP_LOCK_INIT(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_LOCK_INIT: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_LOCK_INIT: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	KeInitializeSpinLock(&(_inp)->inp_lock); \
 } while (0)
 
 #define SCTP_INP_LOCK_DESTROY(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_LOCK_DESTROY: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&(_inp)->inp_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_LOCK_DESTROY: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 } while (0)
 
 #ifdef SCTP_LOCK_LOGGING
 #define SCTP_INP_RLOCK(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_RLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_RLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	sctp_log_lock(_inp, (struct sctp_tcb *)NULL, SCTP_LOG_LOCK_INP); \
 	KeAcquireSpinLockAtDpcLevel(&(_inp)->inp_lock); \
 } while (0)
 #else
 #define SCTP_INP_RLOCK(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_RLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_RLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	KeAcquireSpinLockAtDpcLevel(&(_inp)->inp_lock); \
 } while (0)
 #endif
 
 #ifdef SCTP_LOCK_LOGGING
 #define SCTP_INP_WLOCK(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_WLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_WLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	sctp_log_lock(_inp, (struct sctp_tcb *)NULL, SCTP_LOG_LOCK_INP); \
 	KeAcquireSpinLockAtDpcLevel(&(_inp)->inp_lock); \
 } while (0)
 #else
 #define SCTP_INP_WLOCK(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_WLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_WLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	KeAcquireSpinLockAtDpcLevel(&(_inp)->inp_lock); \
 } while (0)
 #endif
 
 #define SCTP_INP_RUNLOCK(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_RUNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_RUNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	KeReleaseSpinLockFromDpcLevel(&(_inp)->inp_lock); \
 } while (0)
 
 #define SCTP_INP_WUNLOCK(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_WUNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_WUNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	KeReleaseSpinLockFromDpcLevel(&(_inp)->inp_lock); \
 } while (0)
 
 #define SCTP_INP_INCR_REF(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_INCR_REF: inp=%p, refcount=%d %s[%d]\n", (_inp), (_inp)->refcount, __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_INCR_REF: inp=%p, refcount=%d %s[%d]\n", (_inp), (_inp)->refcount, __FILE__, __LINE__); \
 	atomic_add_int(&(_inp)->refcount, 1); \
 } while (0)
 
 #define SCTP_INP_DECR_REF(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_INP_DECR_REF: inp=%p, refcount=%d %s[%d]\n", (_inp), (_inp)->refcount, __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_INP_DECR_REF: inp=%p, refcount=%d %s[%d]\n", (_inp), (_inp)->refcount, __FILE__, __LINE__); \
 	atomic_subtract_int(&(_inp)->refcount, 1); \
 } while (0)
 
 
 #define SCTP_ASOC_CREATE_LOCK_INIT(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_ASOC_CREATE_LOCK_INIT: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_ASOC_CREATE_LOCK_INIT: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	KeInitializeSpinLock(&(_inp)->inp_create_lock); \
 } while (0)
 
 #define SCTP_ASOC_CREATE_LOCK_DESTROY(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_ASOC_CREATE_LOCK_DESTROY: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&(_inp)->inp_create_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_ASOC_CREATE_LOCK_DESTROY: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 } while (0)
 
 #ifdef SCTP_LOCK_LOGGING
 #define SCTP_ASOC_CREATE_LOCK(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_ASOC_CREATE_LOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_ASOC_CREATE_LOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	sctp_log_lock(_inp, (struct sctp_tcb *)NULL, SCTP_LOG_LOCK_CREATE); \
 	KeAcquireSpinLockAtDpcLevel(&(_inp)->inp_create_lock); \
 } while (0)
 #else
 #define SCTP_ASOC_CREATE_LOCK(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_ASOC_CREATE_LOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_ASOC_CREATE_LOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	KeAcquireSpinLockAtDpcLevel(&(_inp)->inp_create_lock); \
 } while (0)
 #endif
 
 #define SCTP_ASOC_CREATE_UNLOCK(_inp) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_ASOC_CREATE_UNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_ASOC_CREATE_UNLOCK: inp=%p %s[%d]\n", (_inp), __FILE__, __LINE__); \
 	KeReleaseSpinLockFromDpcLevel(&(_inp)->inp_create_lock); \
 } while (0)
 
@@ -351,99 +287,71 @@ extern LARGE_INTEGER zero_timeout;
  * extra SOCKBUF_LOCK(&so->so_rcv) even though the association is locked.
  */
 #define SCTP_TCB_LOCK_INIT(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_LOCK_INIT: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_LOCK_INIT: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
 	KeInitializeSpinLock(&(_tcb)->tcb_lock); \
 } while (0)
 
 #define SCTP_TCB_LOCK_DESTROY(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_LOCK_DESTROY: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&(_tcb)->tcb_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_LOCK_DESTROY: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
 } while (0)
 
 #ifdef SCTP_LOCK_LOGGING
 #define SCTP_TCB_LOCK(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_LOCK: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_LOCK: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
        	sctp_log_lock((_tcb)->sctp_ep, _tcb, SCTP_LOG_LOCK_TCB); \
 	KeAcquireSpinLockAtDpcLevel(&(_tcb)->tcb_lock); \
 } while (0)
 #else
 #define SCTP_TCB_LOCK(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_LOCK: tcb=%p,thread=%p %s[%d]\n", (_tcb), KeGetCurrentThread(), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_LOCK: tcb=%p,thread=%p %s[%d]\n", (_tcb), KeGetCurrentThread(), __FILE__, __LINE__); \
 	KeAcquireSpinLockAtDpcLevel(&(_tcb)->tcb_lock); \
 } while (0)
 #endif
 
 __inline int _SCTP_TCB_TRYLOCK(struct sctp_tcb *tcb, char *filename, int lineno) {
-	if (LOCKDEBUG) {
-		DbgPrint("SCTP_TCB_TRYLOCK: tcb=%p,thread=%p %s[%d]\n", tcb, KeGetCurrentThread(), filename, lineno);
-	}
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_TRYLOCK: tcb=%p,thread=%p %s[%d]\n", tcb, KeGetCurrentThread(), filename, lineno);
 	KeAcquireSpinLockAtDpcLevel(&tcb->tcb_lock);
 	return 1;
 }
 #define SCTP_TCB_TRYLOCK(_tcb) _SCTP_TCB_TRYLOCK((_tcb), __FILE__, __LINE__)
 
 #define SCTP_TCB_UNLOCK(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_UNLOCK: tcb=%p,thread=%p %s[%d]\n", (_tcb), KeGetCurrentThread(), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_UNLOCK: tcb=%p,thread=%p %s[%d]\n", (_tcb), KeGetCurrentThread(), __FILE__, __LINE__); \
 	KeReleaseSpinLockFromDpcLevel(&(_tcb)->tcb_lock); \
 } while (0)
 
 #define SCTP_TCB_UNLOCK_IFOWNED(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_UNLOCK_IFOWNED: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_UNLOCK_IFOWNED: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
 	KeReleaseSpinLockFromDpcLevel(&(_tcb)->tcb_lock); \
 } while (0)
 
 #define SCTP_TCB_INCR_REF(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_INCR_REF: tcb=%p, refcount=%d %s[%d]\n", (_tcb), (_tcb)->asoc.refcnt, __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_INCR_REF: tcb=%p, refcount=%d %s[%d]\n", (_tcb), (_tcb)->asoc.refcnt, __FILE__, __LINE__); \
 	atomic_add_int(&(_tcb)->asoc.refcnt, 1); \
 } while (0)
 
 #define SCTP_TCB_DECR_REF(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_DECR_REF: tcb=%p, refcount=%d %s[%d]\n", (_tcb), (_tcb)->asoc.refcnt, __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_DECR_REF: tcb=%p, refcount=%d %s[%d]\n", (_tcb), (_tcb)->asoc.refcnt, __FILE__, __LINE__); \
 	atomic_subtract_int(&(_tcb)->asoc.refcnt, 1); \
 } while (0)
 
 
 #define SCTP_TCB_SEND_LOCK_INIT(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_SEND_LOCK_INIT: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_SEND_LOCK_INIT: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
 	KeInitializeSpinLock(&(_tcb)->tcb_send_lock); \
 } while (0)
 
 #define SCTP_TCB_SEND_LOCK_DESTROY(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_SEND_LOCK_DESTROY: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&(_tcb)->tcb_send_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_SEND_LOCK_DESTROY: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
 } while (0) 
 
 #define SCTP_TCB_SEND_LOCK(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_SEND_LOCK: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_SEND_LOCK: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
 	KeAcquireSpinLockAtDpcLevel(&(_tcb)->tcb_send_lock); \
 } while (0)
 
 #define SCTP_TCB_SEND_UNLOCK(_tcb) do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_TCB_SEND_UNLOCK: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
-	} \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_TCB_SEND_UNLOCK: tcb=%p %s[%d]\n", (_tcb), __FILE__, __LINE__); \
 	KeReleaseSpinLockFromDpcLevel(&(_tcb)->tcb_send_lock); \
 } while (0)
 
@@ -484,98 +392,87 @@ __inline int _SCTP_TCB_TRYLOCK(struct sctp_tcb *tcb, char *filename, int lineno)
 #endif
 
 #define SCTP_ITERATOR_LOCK_INIT() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_ITERATOR_LOCK_INIT: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeInitializeSpinLock(&sctppcbinfo.it_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_ITERATOR_LOCK_INIT: %s[%d]\n", __FILE__, __LINE__); \
+	KeInitializeSpinLock(&SCTP_BASE_INFO(it_lock)); \
 } while (0)
 
 #define SCTP_ITERATOR_LOCK_DESTROY() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_ITERATOR_LOCK_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&sctppcbinfo.it_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_ITERATOR_LOCK_DESTROY: %s[%d]\n", __FILE__, __LINE__); \
 } while (0)
 
 
 #ifdef INVARIANTS
 #define SCTP_ITERATOR_LOCK() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_ITERATOR_LOCK: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeAcquireSpinLockAtDpcLevel(&sctppcbinfo.it_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_ITERATOR_LOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeAcquireSpinLockAtDpcLevel(&SCTP_BASE_INFO(it_lock)); \
 } while (0)
 #else
 #define SCTP_ITERATOR_LOCK() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_ITERATOR_LOCK: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeAcquireSpinLockAtDpcLevel(&sctppcbinfo.it_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_ITERATOR_LOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeAcquireSpinLockAtDpcLevel(&SCTP_BASE_INFO(it_lock)); \
 } while (0)
 #endif
 
 #define SCTP_ITERATOR_UNLOCK() do { \
-	if (LOCKDEBUG) { \
-		DbgPrint("SCTP_ITERATOR_UNLOCK: %s[%d]\n", __FILE__, __LINE__); \
-	} \
-	KeReleaseSpinLockFromDpcLevel(&sctppcbinfo.it_lock); \
+	SCTPDBG(SCTP_DEBUG_NOISY, "SCTP_ITERATOR_UNLOCK: %s[%d]\n", __FILE__, __LINE__); \
+	KeReleaseSpinLockFromDpcLevel(&SCTP_BASE_INFO(it_lock)); \
 } while (0)
 
 #define SCTP_INCR_EP_COUNT() do { \
-	atomic_add_int(&sctppcbinfo.ipi_count_ep, 1); \
+	atomic_add_int(&SCTP_BASE_INFO(ipi_count_ep), 1); \
 } while (0)
 #define SCTP_DECR_EP_COUNT() do { \
-	atomic_subtract_int(&sctppcbinfo.ipi_count_ep, 1); \
+	atomic_subtract_int(&SCTP_BASE_INFO(ipi_count_ep), 1); \
 } while (0)
 #define SCTP_INCR_ASOC_COUNT() do { \
-	atomic_add_int(&sctppcbinfo.ipi_count_asoc, 1); \
+	atomic_add_int(&SCTP_BASE_INFO(ipi_count_asoc), 1); \
 } while (0)
 #define SCTP_DECR_ASOC_COUNT() do { \
-	atomic_subtract_int(&sctppcbinfo.ipi_count_asoc, 1); \
+	atomic_subtract_int(&SCTP_BASE_INFO(ipi_count_asoc), 1); \
 } while (0)
 #define SCTP_INCR_LADDR_COUNT() do { \
-	atomic_add_int(&sctppcbinfo.ipi_count_laddr, 1); \
+	atomic_add_int(&SCTP_BASE_INFO(ipi_count_laddr), 1); \
 } while (0)
 #define SCTP_DECR_LADDR_COUNT() do { \
-	atomic_subtract_int(&sctppcbinfo.ipi_count_laddr, 1); \
+	atomic_subtract_int(&SCTP_BASE_INFO(ipi_count_laddr), 1); \
 } while (0)
 #define SCTP_INCR_RADDR_COUNT() do { \
-	atomic_add_int(&sctppcbinfo.ipi_count_raddr, 1); \
+	atomic_add_int(&SCTP_BASE_INFO(ipi_count_raddr), 1); \
 } while (0)
 #define SCTP_DECR_RADDR_COUNT() do { \
-	atomic_subtract_int(&sctppcbinfo.ipi_count_raddr, 1); \
+	atomic_subtract_int(&SCTP_BASE_INFO(ipi_count_raddr), 1); \
 } while (0)
 #define SCTP_INCR_CHK_COUNT() do { \
-	atomic_add_int(&sctppcbinfo.ipi_count_chunk, 1); \
+	atomic_add_int(&SCTP_BASE_INFO(ipi_count_chun)k, 1); \
 } while (0)
 #define SCTP_DECR_CHK_COUNT() do { \
-	atomic_subtract_int(&sctppcbinfo.ipi_count_chunk, 1); \
+	atomic_subtract_int(&SCTP_BASE_INFO(ipi_count_chunk), 1); \
 } while (0)
 #define SCTP_INCR_READQ_COUNT() do { \
-	atomic_add_int(&sctppcbinfo.ipi_count_readq, 1); \
+	atomic_add_int(&SCTP_BASE_INFO(ipi_count_readq), 1); \
 } while (0)
 #define SCTP_DECR_READQ_COUNT() do { \
-	atomic_subtract_int(&sctppcbinfo.ipi_count_readq, 1); \
+	atomic_subtract_int(&SCTP_BASE_INFO(ipi_count_readq), 1); \
 } while (0)
 
 #define SCTP_INCR_STRMOQ_COUNT() do { \
-	atomic_add_int(&sctppcbinfo.ipi_count_strmoq, 1); \
+	atomic_add_int(&SCTP_BASE_INFO(ipi_count_strmoq), 1); \
 } while (0)
 #define SCTP_DECR_STRMOQ_COUNT() do { \
-	atomic_subtract_int(&sctppcbinfo.ipi_count_strmoq, 1); \
+	atomic_subtract_int(&SCTP_BASE_INFO(ipi_count_strmoq), 1); \
 } while (0)
 
 #define SCTP_INCR_FREE_STRMOQ_COUNT() do { \
-	atomic_add_int(&sctppcbinfo.ipi_free_strmoq, 1); \
+	atomic_add_int(&SCTP_BASE_INFO(ipi_free_strmoq), 1); \
 } while (0)
 #define SCTP_DECR_FREE_STRMOQ_COUNT() do { \
-	atomic_subtract_int(&sctppcbinfo.ipi_free_strmoq, 1); \
+	atomic_subtract_int(&SCTP_BASE_INFO(ipi_free_strmoq), 1); \
 } while (0)
 
 #define SCTP_INCR_FREE_CHK_COUNT() do { \
-	atomic_add_int(&sctppcbinfo.ipi_free_chunks, 1); \
+	atomic_add_int(&SCTP_BASE_INFO(ipi_free_chunks), 1); \
 } while (0)
 #define SCTP_DECR_FREE_CHK_COUNT() do { \
-	atomic_subtract_int(&sctppcbinfo.ipi_free_chunks, 1); \
+	atomic_subtract_int(&SCTP_BASE_INFO(ipi_free_chunks), 1); \
 } while (0)
 #endif

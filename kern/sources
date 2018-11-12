@@ -1,0 +1,21 @@
+!include ..\sources.inc
+
+TARGETNAME=kern
+TARGETTYPE=LIBRARY
+
+TARGETLIBS=
+
+INCLUDES= \
+    ..; \
+    $(DDK_INC_PATH)
+
+SOURCES= \
+    kern_timeout.c \
+    kern_subr.c \
+    kern_mbuf.c \
+    kern_sysctl.c \
+    uipc_domain.c \
+    uipc_mbuf.c \
+    uipc_socket.c \
+    uipc_sockbuf.c \
+    uipc_syscalls.c

@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2001-2007, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2001-2007, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -33,21 +33,19 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_peeloff.c,v 1.6 2007/04/14 09:44:09 rrs Exp $");
+__FBSDID("$FreeBSD: head/sys/netinet/sctp_peeloff.c 179783 2008-06-14 07:58:05Z rrs $");
 #endif
 #include <netinet/sctp_os.h>
 #include <netinet/sctp_pcb.h>
+#include <netinet/sctputil.h>
+#include <netinet/sctp_var.h>
+#include <netinet/sctp_var.h>
+#include <netinet/sctp_sysctl.h>
 #include <netinet/sctp.h>
 #include <netinet/sctp_uio.h>
-#include <netinet/sctp_var.h>
 #include <netinet/sctp_peeloff.h>
 #include <netinet/sctputil.h>
 #include <netinet/sctp_auth.h>
-
-
-#ifdef SCTP_DEBUG
-extern uint32_t sctp_debug_on;
-#endif				/* SCTP_DEBUG */
 
 #if defined(__APPLE__)
 #define APPLE_FILE_NO 5
@@ -58,13 +56,25 @@ sctp_can_peel_off(struct socket *head, sctp_assoc_t assoc_id)
 {
 	struct sctp_inpcb *inp;
 	struct sctp_tcb *stcb;
+	uint32_t state;
 
 	inp = (struct sctp_inpcb *)head->so_pcb;
 	if (inp == NULL) {
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_PEELOFF, EFAULT);
 		return (EFAULT);
 	}
 	stcb = sctp_findassociation_ep_asocid(inp, assoc_id, 1);
 	if (stcb == NULL) {
+		SCTP_LTRACE_ERR_RET(inp, stcb, NULL, SCTP_FROM_SCTP_PEELOFF, ENOENT);
+		return (ENOENT);
+	}
+	state = SCTP_GET_STATE((&stcb->asoc));
+	if ((state == SCTP_STATE_EMPTY) ||
+	    (state == SCTP_STATE_INUSE) ||
+	    (state == SCTP_STATE_COOKIE_WAIT) ||
+	    (state == SCTP_STATE_COOKIE_ECHOED)) {
+		SCTP_TCB_UNLOCK(stcb);
+		SCTP_LTRACE_ERR_RET(inp, stcb, NULL, SCTP_FROM_SCTP_PEELOFF, ENOTCONN);
 		return (ENOTCONN);
 	}
 	SCTP_TCB_UNLOCK(stcb);
@@ -77,13 +87,28 @@ sctp_do_peeloff(struct socket *head, struct socket *so, sctp_assoc_t assoc_id)
 {
 	struct sctp_inpcb *inp, *n_inp;
 	struct sctp_tcb *stcb;
+	uint32_t state;
 
 	inp = (struct sctp_inpcb *)head->so_pcb;
-	if (inp == NULL)
+	if (inp == NULL) {
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_PEELOFF, EFAULT);
 		return (EFAULT);
+	}
 	stcb = sctp_findassociation_ep_asocid(inp, assoc_id, 1);
-	if (stcb == NULL)
+	if (stcb == NULL) {
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_PEELOFF, ENOTCONN);
 		return (ENOTCONN);
+	}
+
+	state = SCTP_GET_STATE((&stcb->asoc));
+	if ((state == SCTP_STATE_EMPTY) ||
+	    (state == SCTP_STATE_INUSE) ||
+	    (state == SCTP_STATE_COOKIE_WAIT) ||
+	    (state == SCTP_STATE_COOKIE_ECHOED)) {
+		SCTP_TCB_UNLOCK(stcb);
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_PEELOFF, ENOTCONN);
+		return (ENOTCONN);
+	}
 
 	n_inp = (struct sctp_inpcb *)so->so_pcb;
 	n_inp->sctp_flags = (SCTP_PCB_FLAGS_UDPTYPE |
@@ -92,53 +117,73 @@ sctp_do_peeloff(struct socket *head, struct socket *so, sctp_assoc_t assoc_id)
 	    (SCTP_PCB_COPY_FLAGS & inp->sctp_flags));
 	n_inp->sctp_socket = so;
 	n_inp->sctp_features = inp->sctp_features;
+	n_inp->sctp_mobility_features = inp->sctp_mobility_features;
 	n_inp->sctp_frag_point = inp->sctp_frag_point;
 	n_inp->partial_delivery_point = inp->partial_delivery_point;
 	n_inp->sctp_context = inp->sctp_context;
 	n_inp->inp_starting_point_for_iterator = NULL;
-
+	/* copy in the authentication parameters from the original endpoint */
+	if (n_inp->sctp_ep.local_hmacs)
+		sctp_free_hmaclist(n_inp->sctp_ep.local_hmacs);
+	n_inp->sctp_ep.local_hmacs =
+	    sctp_copy_hmaclist(inp->sctp_ep.local_hmacs);
+	if (n_inp->sctp_ep.local_auth_chunks)
+		sctp_free_chunklist(n_inp->sctp_ep.local_auth_chunks);
+	n_inp->sctp_ep.local_auth_chunks =
+	    sctp_copy_chunklist(inp->sctp_ep.local_auth_chunks);
+	(void)sctp_copy_skeylist(&inp->sctp_ep.shared_keys,
+	    &n_inp->sctp_ep.shared_keys);
 	/*
 	 * Now we must move it from one hash table to another and get the
 	 * stcb in the right place.
 	 */
 	sctp_move_pcb_and_assoc(inp, n_inp, stcb);
-
-	sctp_pull_off_control_to_new_inp(inp, n_inp, stcb);
-
+	atomic_add_int(&stcb->asoc.refcnt, 1);
 	SCTP_TCB_UNLOCK(stcb);
+
+#if defined(__FreeBSD__)
+	sctp_pull_off_control_to_new_inp(inp, n_inp, stcb, SBL_WAIT);
+#else
+	sctp_pull_off_control_to_new_inp(inp, n_inp, stcb, M_WAITOK);
+#endif
+	atomic_subtract_int(&stcb->asoc.refcnt, 1);
+
 	return (0);
 }
 
-#if defined( __Panda__)
-/* Need a function to remove the asoc found from socket */
-void panda_remove_from_sockbuf(struct socket *head);
-#endif
 
 struct socket *
 sctp_get_peeloff(struct socket *head, sctp_assoc_t assoc_id, int *error)
 {
+#if defined(__Userspace__)
+    /* if __Userspace__ chooses to originally not support peeloff, put it here... */
+#endif
+#if defined(__Panda__)
+	SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP_PEELOFF, EINVAL);
+	*error = EINVAL;
+	return (NULL);
+#else
 	struct socket *newso;
 	struct sctp_inpcb *inp, *n_inp;
 	struct sctp_tcb *stcb;
 
-#ifdef SCTP_DEBUG
-	if (sctp_debug_on & SCTP_DEBUG_PEEL1) {
-		printf("SCTP peel-off called\n");
-	}
-#endif				/* SCTP_DEBUG */
-
+	SCTPDBG(SCTP_DEBUG_PEEL1, "SCTP peel-off called\n");
 	inp = (struct sctp_inpcb *)head->so_pcb;
 	if (inp == NULL) {
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_PEELOFF, EFAULT);
 		*error = EFAULT;
 		return (NULL);
 	}
 	stcb = sctp_findassociation_ep_asocid(inp, assoc_id, 1);
 	if (stcb == NULL) {
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_PEELOFF, ENOTCONN);
 		*error = ENOTCONN;
 		return (NULL);
 	}
+	atomic_add_int(&stcb->asoc.refcnt, 1);
+	SCTP_TCB_UNLOCK(stcb);
 	newso = sonewconn(head, SS_ISCONNECTED
-#if defined(__APPLE__) && !defined(SCTP_APPLE_PANTHER)
+#if defined(__APPLE__)
 	    , NULL
 #elif defined(__Panda__)
 	    /* place this socket in the assoc's vrf id */
@@ -146,25 +191,22 @@ sctp_get_peeloff(struct socket *head, sctp_assoc_t assoc_id, int *error)
 #endif
 		);
 	if (newso == NULL) {
-#ifdef SCTP_DEBUG
-		if (sctp_debug_on & SCTP_DEBUG_PEEL1) {
-			printf("sctp_peeloff:sonewconn failed err\n");
-		}
-#endif				/* SCTP_DEBUG */
+		SCTPDBG(SCTP_DEBUG_PEEL1, "sctp_peeloff:sonewconn failed\n");
+		SCTP_LTRACE_ERR_RET(NULL, stcb, NULL, SCTP_FROM_SCTP_PEELOFF, ENOMEM);
 		*error = ENOMEM;
-		SCTP_TCB_UNLOCK(stcb);
+		atomic_subtract_int(&stcb->asoc.refcnt, 1);
 		return (NULL);
-#ifndef SCTP_PER_SOCKET_LOCKING
+
 	}
-#else
-        } else {
+#if defined(__APPLE__)
+	  else {
 		SCTP_SOCKET_LOCK(newso, 1);
 	}
 #endif
-        n_inp = (struct sctp_inpcb *)newso->so_pcb;
+	SCTP_TCB_LOCK(stcb);
+	atomic_subtract_int(&stcb->asoc.refcnt, 1);
+	n_inp = (struct sctp_inpcb *)newso->so_pcb;
 	SOCK_LOCK(head);
-	SCTP_INP_WLOCK(inp);
-	SCTP_INP_WLOCK(n_inp);
 	n_inp->sctp_flags = (SCTP_PCB_FLAGS_UDPTYPE |
 	    SCTP_PCB_FLAGS_CONNECTED |
 	    SCTP_PCB_FLAGS_IN_TCPPOOL |	/* Turn on Blocking IO */
@@ -199,19 +241,20 @@ sctp_get_peeloff(struct socket *head, sctp_assoc_t assoc_id, int *error)
         newso->so_state |= SS_ISCONNECTED;
 	/* We remove it right away */
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__) || defined(__Userspace__)
 #ifdef SCTP_LOCK_LOGGING
-	sctp_log_lock(inp, (struct sctp_tcb *)NULL, SCTP_LOG_LOCK_SOCK);
+	if (SCTP_BASE_SYSCTL(sctp_logging_level) & SCTP_LOCK_LOGGING_ENABLE) {
+		sctp_log_lock(inp, (struct sctp_tcb *)NULL, SCTP_LOG_LOCK_SOCK);
+	}
 #endif
 	TAILQ_REMOVE(&head->so_comp, newso, so_list);
 	head->so_qlen--;
 	SOCK_UNLOCK(head);
-#elif defined ( __Panda__)
-        panda_remove_from_sockbuf(head);
-#else  /* Netbsd/OpenBSD */
+#else
         newso = TAILQ_FIRST(&head->so_q);
 	if (soqremque(newso, 1) == 0) {
-		printf("soremque failed, peeloff-fails (invarients would panic)\n");
+		SCTP_PRINTF("soremque failed, peeloff-fails (invarients would panic)\n");
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_PEELOFF, ENOTCONN);
 		*error = ENOTCONN;
 		return (NULL);
 
@@ -221,15 +264,19 @@ sctp_get_peeloff(struct socket *head, sctp_assoc_t assoc_id, int *error)
 	 * Now we must move it from one hash table to another and get the
 	 * stcb in the right place.
 	 */
-	SCTP_INP_WUNLOCK(n_inp);
-	SCTP_INP_WUNLOCK(inp);
-	sctp_move_pcb_and_assoc(inp, n_inp, stcb);
+        sctp_move_pcb_and_assoc(inp, n_inp, stcb);
+	atomic_add_int(&stcb->asoc.refcnt, 1);
+	SCTP_TCB_UNLOCK(stcb);
 	/*
 	 * And now the final hack. We move data in the pending side i.e.
 	 * head to the new socket buffer. Let the GRUBBING begin :-0
 	 */
-	sctp_pull_off_control_to_new_inp(inp, n_inp, stcb);
-
-	SCTP_TCB_UNLOCK(stcb);
+#if defined(__FreeBSD__)
+	sctp_pull_off_control_to_new_inp(inp, n_inp, stcb, SBL_WAIT);
+#else
+	sctp_pull_off_control_to_new_inp(inp, n_inp, stcb, M_WAITOK);
+#endif
+	atomic_subtract_int(&stcb->asoc.refcnt, 1);
 	return (newso);
+#endif
 }

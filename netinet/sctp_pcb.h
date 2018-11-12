@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2001-2007, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2001-2007, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -32,7 +32,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_pcb.h,v 1.12 2007/04/22 12:12:38 rrs Exp $");
+__FBSDID("$FreeBSD: head/sys/netinet/sctp_pcb.h 185694 2008-12-06 13:19:54Z rrs $");
 #endif
 
 #ifndef __sctp_pcb_h__
@@ -41,6 +41,7 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_pcb.h,v 1.12 2007/04/22 12:12:38 rrs Ex
 #include <netinet/sctp_os.h>
 #include <netinet/sctp.h>
 #include <netinet/sctp_constants.h>
+#include <netinet/sctp_sysctl.h>
 
 LIST_HEAD(sctppcbhead, sctp_inpcb);
 LIST_HEAD(sctpasochead, sctp_tcb);
@@ -53,7 +54,6 @@ TAILQ_HEAD(sctp_readhead, sctp_queued_to_read);
 TAILQ_HEAD(sctp_streamhead, sctp_stream_queue_pending);
 
 #include <netinet/sctp_structs.h>
-#include <netinet/sctp_uio.h>
 #include <netinet/sctp_auth.h>
 
 #define SCTP_PCBHASH_ALLADDR(port, mask) (port & mask)
@@ -64,19 +64,27 @@ struct sctp_vrf {
 	struct sctp_ifalist *vrf_addr_hash;
 	struct sctp_ifnlist ifnlist;
 	uint32_t vrf_id;
+	uint32_t tbl_id_v4;		/* default v4 table id */
+	uint32_t tbl_id_v6;		/* default v6 table id */
 	uint32_t total_ifa_count;
-	u_long   vrf_hashmark;
+	u_long   vrf_addr_hashmark;
+	uint32_t refcount;
 };
 
 struct sctp_ifn {
 	struct sctp_ifalist ifalist;
 	struct sctp_vrf *vrf;
 	LIST_ENTRY(sctp_ifn) next_ifn;
+	LIST_ENTRY(sctp_ifn) next_bucket;
 	void     *ifn_p;	/* never access without appropriate lock */
+	uint32_t ifn_mtu;
 	uint32_t ifn_type;
 	uint32_t ifn_index;	/* shorthand way to look at ifn for reference */
 	uint32_t refcount;	/* number of reference held should be >= ifa_count */
 	uint32_t ifa_count;	/* IFA's we hold (in our list - ifalist)*/
+	uint32_t num_v6;	/* number of v6 addresses */
+	uint32_t num_v4;	/* number of v4 addresses */
+	uint32_t registered_af;	/* registered address family for i/f events */
 	char     ifn_name[SCTP_IFNAMSIZ];
 };
 
@@ -101,16 +109,14 @@ struct sctp_ifa {
 				 * appropriate locks. This is for V6.
 				 */
 	union sctp_sockstore address;
-#if defined(__Panda__)
-	struct ip_addr ip_addr;	/* internal address format */
-#endif
 	uint32_t refcount;	/* number of folks refering to this */
- 	uint32_t flags;
+     	uint32_t flags;
 	uint32_t localifa_flags;
+	uint32_t vrf_id;	/* vrf_id of this addr (for deleting) */
 	uint8_t src_is_loop;
 	uint8_t src_is_priv;
 	uint8_t src_is_glob;
-	uint8_t in_ifa_list;
+	uint8_t resv;
 };
 
 struct sctp_laddr {
@@ -120,6 +126,7 @@ struct sctp_laddr {
 					 * if no-zero src-addr selection will
 					 * not consider this address.
 					 */
+	struct timeval start_time;      /* time when this address was created */
 };
 
 struct sctp_block_entry {
@@ -128,13 +135,16 @@ struct sctp_block_entry {
 
 struct sctp_timewait {
 	uint32_t tv_sec_at_expire;	/* the seconds from boot to expire */
-	uint32_t v_tag;		/* the vtag that can not be reused */
+        uint32_t v_tag;		        /* the vtag that can not be reused */
+        uint16_t lport;                 /* the local port used in vtag */
+        uint16_t rport;                 /* the remote port used in vtag */
 };
 
 struct sctp_tagblock {
 	LIST_ENTRY(sctp_tagblock) sctp_nxt_tagblock;
 	struct sctp_timewait vtag_block[SCTP_NUMBER_IN_VTAG_BLOCK];
 };
+
 
 struct sctp_epinfo {
 	struct sctpasochead *sctp_asochash;
@@ -143,8 +153,6 @@ struct sctp_epinfo {
 	struct sctppcbhead *sctp_ephash;
 	u_long hashmark;
 
-	struct sctpasochead *sctp_restarthash;
-	u_long hashrestartmark;
 	/*-
 	 * The TCP model represents a substantial overhead in that we get an
 	 * additional hash table to keep explicit connections in. The
@@ -165,14 +173,17 @@ struct sctp_epinfo {
 	struct sctp_vrflist *sctp_vrfhash;
 	u_long hashvrfmark;
 
+	struct sctp_ifnlist *vrf_ifn_hash;
+	u_long   vrf_ifn_hashmark;
+
 	struct sctppcbhead listhead;
 	struct sctpladdr addr_wq;
 
-#if defined(SCTP_APPLE_FINE_GRAINED_LOCKING)
+#if defined(__APPLE__)
 	struct inpcbhead inplisthead;
 #endif
 	struct sctpiterators iteratorhead;
-
+    int threads_must_exit;
 	/* ep zone info */
 	sctp_zone_t ipi_zone_ep;
 	sctp_zone_t ipi_zone_asoc;
@@ -181,19 +192,31 @@ struct sctp_epinfo {
 	sctp_zone_t ipi_zone_chunk;
 	sctp_zone_t ipi_zone_readq;
 	sctp_zone_t ipi_zone_strmoq;
+	sctp_zone_t ipi_zone_asconf;
+	sctp_zone_t ipi_zone_asconf_ack;
 
 #if defined(__FreeBSD__) && __FreeBSD_version >= 503000
+#if __FreeBSD_version <= 602000
 	struct mtx ipi_ep_mtx;
+#else
+	struct rwlock ipi_ep_mtx;
+#endif
 	struct mtx it_mtx;
 	struct mtx ipi_iterator_wq_mtx;
+#if __FreeBSD_version <= 602000
 	struct mtx ipi_addr_mtx;
+#else
+	struct rwlock ipi_addr_mtx;
+#endif
+	struct mtx ipi_pktlog_mtx;
 #elif defined(SCTP_PROCESS_LEVEL_LOCKS)
 	pthread_mutex_t ipi_ep_mtx;
 	pthread_mutex_t it_mtx;
 	pthread_mutex_t ipi_iterator_wq_mtx;
 	pthread_mutex_t ipi_addr_mtx;
 	pthread_mutex_t ipi_count_mtx;
-#elif defined(SCTP_APPLE_FINE_GRAINED_LOCKING)
+	pthread_mutex_t ipi_pktlog_mtx;
+#elif defined(__APPLE__)
 #ifdef _KERN_LOCKS_H_
 	lck_grp_attr_t *mtx_grp_attr;
 	lck_grp_t *mtx_grp;
@@ -201,7 +224,9 @@ struct sctp_epinfo {
 	lck_rw_t *ipi_ep_mtx;
 	lck_mtx_t *it_mtx;
 	lck_mtx_t *ipi_iterator_wq_mtx;
+	lck_mtx_t *ipi_addr_mtx;
 	lck_mtx_t *ipi_count_mtx;
+	lck_mtx_t *ipi_pktlog_mtx;
 	lck_mtx_t *logging_mtx;
 #else
 	void *mtx_grp_attr;
@@ -218,6 +243,9 @@ struct sctp_epinfo {
 	KSPIN_LOCK it_lock;
 	KSPIN_LOCK ipi_iterator_wq_lock;
 	KSPIN_LOCK ipi_addr_lock;
+	KSPIN_LOCK ipi_pktlog_mtx;
+#elif defined(__Userspace__)
+    /* TODO decide on __Userspace__ locks */
 #endif
 	uint32_t ipi_count_ep;
 
@@ -239,24 +267,60 @@ struct sctp_epinfo {
 	/* socket queue zone info */
 	uint32_t ipi_count_strmoq;
 
+	/* Number of vrfs */
+	uint32_t ipi_count_vrfs;
+
+        /* Number of ifns */
+	uint32_t ipi_count_ifns;
+
+        /* Number of ifas */
+	uint32_t ipi_count_ifas;
+
 	/* system wide number of free chunks hanging around */
 	uint32_t ipi_free_chunks;
 	uint32_t ipi_free_strmoq;
+
 
 	struct sctpvtaghead vtag_timewait[SCTP_STACK_VTAG_HASH_SIZE];
 
 	/* address work queue handling */
 #if defined(SCTP_USE_THREAD_BASED_ITERATOR)
 	uint32_t iterator_running;
+#if !defined(__Windows__)
 	SCTP_PROCESS_STRUCT thread_proc;
+#else
+	PFILE_OBJECT iterator_thread_obj;
+#endif
 #if defined(SCTP_PROCESS_LEVEL_LOCKS)
 	pthread_cond_t iterator_wakeup;
+#elif defined(__Windows__)
+	KEVENT iterator_wakeup[2];
 #endif
 #endif
 	struct sctp_timer addr_wq_timer;
 
-#ifdef _SCTP_NEEDS_CALLOUT_
+#if defined(_SCTP_NEEDS_CALLOUT_) || defined(_USER_SCTP_NEEDS_CALLOUT_)
 	struct calloutlist callqueue;
+#endif
+};
+
+
+struct sctp_base_info {
+	/* All static structures that
+	 * anchor the system must be here. 
+	 */
+	struct sctp_epinfo sctppcbinfo;
+	struct sctpstat    sctpstat;
+	struct sctp_sysctl sctpsysctl;
+	uint8_t first_time;
+	char sctp_pcb_initialized;
+#if defined(SCTP_PACKET_LOGGING)
+	int packet_log_writers;
+	int packet_log_end;
+	uint8_t packet_log_buffer[SCTP_PACKET_LOG_SIZE];
+#endif
+#if defined(__APPLE__)
+	int sctp_main_timer_ticks;
 #endif
 };
 
@@ -281,6 +345,7 @@ struct sctp_pcb {
 	uint32_t sctp_sws_sender;
 	uint32_t sctp_sws_receiver;
 
+	uint32_t sctp_default_cc_module;
 	/* authentication related fields */
 	struct sctp_keyhead shared_keys;
 	sctp_auth_chklist_t *local_auth_chunks;
@@ -289,15 +354,15 @@ struct sctp_pcb {
 
 	/* various thresholds */
 	/* Max times I will init at a guy */
-	unsigned int max_init_times;
+	uint16_t max_init_times;
 
 	/* Max times I will send before we consider someone dead */
-	unsigned int max_send_times;
+	uint16_t max_send_times;
 
-	unsigned int def_net_failure;
+	uint16_t def_net_failure;
 
 	/* number of streams to pre-open on a association */
-	unsigned int pre_open_stream_count;
+	uint16_t pre_open_stream_count;
 	uint16_t max_open_streams_intome;
 
 	/* random number generator */
@@ -310,13 +375,18 @@ struct sctp_pcb {
 	 * change the secret key.  The default is once a hour
 	 */
 	struct sctp_timer signature_change;
-	int def_cookie_life;
+
+	/* Zero copy full buffer timer */
+	struct sctp_timer zero_copy_timer;
+        /* Zero copy app to transport (sendq) read repulse timer */
+	struct sctp_timer zero_copy_sendq_timer;
+	uint32_t def_cookie_life;
 	/* defaults to 0 */
 	int auto_close_time;
 	uint32_t initial_sequence_debug;
 	uint32_t adaptation_layer_indicator;
-	char store_at;
-	unsigned int max_burst;
+	uint32_t store_at;
+	uint8_t max_burst;
 	char current_secret_number;
 	char last_secret_number;
 };
@@ -331,6 +401,16 @@ struct sctp_pcb {
 
 #define sctp_lport ip_inp.inp.inp_lport
 
+struct sctp_pcbtsn_rlog {
+	uint32_t vtag;
+	uint16_t strm;
+	uint16_t seq;
+	uint16_t sz;
+	uint16_t flgs;
+};
+#define SCTP_READ_LOG_SIZE 135	/* we choose the number to make a pcb a page */
+
+
 struct sctp_inpcb {
 	/*-
 	 * put an inpcb in front of it all, kind of a waste but we need to
@@ -342,7 +422,7 @@ struct sctp_inpcb {
 		        ~SCTP_ALIGNM1];
 	}     ip_inp;
 
-#if defined(SCTP_APPLE_FINE_GRAINED_LOCKING)
+#if defined(__APPLE__)
 	/* leave some space in case i386 inpcb is bigger than ppc */
 	uint8_t		padding[128];
 #endif
@@ -350,7 +430,7 @@ struct sctp_inpcb {
 	/* Socket buffer lock protects read_queue and of course sb_cc */
 	struct sctp_readhead read_queue;
 
-        LIST_ENTRY(sctp_inpcb) sctp_list;	/* lists all endpoints */
+    LIST_ENTRY(sctp_inpcb) sctp_list;	/* lists all endpoints */
         /* hash of all endpoints for model */
 	LIST_ENTRY(sctp_inpcb) sctp_hash;
 	/* count of local addresses bound, 0 if bound all */
@@ -365,6 +445,7 @@ struct sctp_inpcb {
 	struct socket *sctp_socket;
 	uint32_t sctp_flags;	/* INP state flag set */
 	uint32_t sctp_features;	/* Feature flags */
+	uint32_t sctp_mobility_features; /* Mobility  Feature flags */
 	struct sctp_pcb sctp_ep;/* SCTP ep data */
 	/* head of the hash of all associations */
 	struct sctpasochead *sctp_tcbhash;
@@ -378,7 +459,7 @@ struct sctp_inpcb {
 	uint32_t sctp_frag_point;
 	uint32_t partial_delivery_point;
 	uint32_t sctp_context;
-	struct sctp_sndrcvinfo def_send;
+	struct sctp_nonpad_sndrcvinfo def_send;
 	/*-
 	 * These three are here for the sosend_dgram
 	 * (pkt, pkt_last and control).
@@ -387,9 +468,13 @@ struct sctp_inpcb {
 	 * they are candidates with sctp_sendm for
 	 * de-supporting.
 	 */
+#ifdef __Panda__
+	pakhandle_type pak_to_read;
+	pakhandle_type pak_to_read_sendq;
+#endif
 	struct mbuf *pkt, *pkt_last;
 	struct mbuf *control;
-#if !(defined(__FreeBSD__) || defined(__APPLE__))
+#if !(defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__) || defined(__Userspace__))
 #ifndef INP_IPV6
 #define INP_IPV6	0x1
 #endif
@@ -397,8 +482,9 @@ struct sctp_inpcb {
 #define INP_IPV4	0x2
 #endif
 	uint8_t inp_vflag;
+                               /* TODO __Userspace__ where is our inp_vlag going to be? */
 	uint8_t inp_ip_ttl;
-	uint8_t inp_ip_tos;
+        uint8_t inp_ip_tos;    /* defined as macro in user_inpcb.h */
 	uint8_t inp_ip_resv;
 #endif
 #if defined(__FreeBSD__) && __FreeBSD_version >= 503000
@@ -411,13 +497,24 @@ struct sctp_inpcb {
 	pthread_mutex_t inp_create_mtx;
 	pthread_mutex_t inp_rdata_mtx;
 	int32_t refcount;
+#elif defined(__APPLE__)
+#if defined(SCTP_APPLE_RWLOCK)
+	lck_rw_t *inp_mtx;
+#else
+	lck_mtx_t *inp_mtx;
+#endif
+	lck_mtx_t *inp_create_mtx;
+	lck_mtx_t *inp_rdata_mtx;
 #elif defined(__Windows__)
 	KSPIN_LOCK inp_lock;
 	KSPIN_LOCK inp_create_lock;
 	KSPIN_LOCK inp_rdata_lock;
 	int32_t refcount;
+#elif defined(__Userspace__)
+    /* TODO decide on __Userspace__ locks */
+	int32_t refcount;
 #endif
-#if defined(SCTP_APPLE_FINE_GRAINED_LOCKING)
+#if defined(__APPLE__)
 	int32_t refcount;
 
 	uint32_t lock_caller1;
@@ -447,6 +544,14 @@ struct sctp_inpcb {
 	uint32_t total_recvs;
 	uint32_t last_abort_code;
 	uint32_t total_nospaces;
+	struct sctpasochead *sctp_asocidhash;
+	u_long hashasocidmark;
+        uint32_t sctp_associd_counter;
+  
+#ifdef SCTP_ASOCLOG_OF_TSNS
+	struct sctp_pcbtsn_rlog readlog[SCTP_READ_LOG_SIZE];
+	uint32_t readlog_index;
+#endif
 };
 
 struct sctp_tcb {
@@ -456,8 +561,9 @@ struct sctp_tcb {
 						 * table */
         LIST_ENTRY(sctp_tcb) sctp_tcblist;	/* list of all of the
 						 * TCB's */
-        LIST_ENTRY(sctp_tcb) sctp_tcbrestarhash;	/* next link in restart
-							 * hash table */
+        LIST_ENTRY(sctp_tcb) sctp_tcbasocidhash;	/* next link in asocid
+							 * hash table
+							 */
         LIST_ENTRY(sctp_tcb) sctp_asocs;	/* vtag hash list */
 	struct sctp_block_entry *block_entry;	/* pointer locked by  socket
 						 * send buffer */
@@ -479,9 +585,19 @@ struct sctp_tcb {
 #elif defined(SCTP_PROCESS_LEVEL_LOCKS)
 	pthread_mutex_t tcb_mtx;
 	pthread_mutex_t tcb_send_mtx;
+#elif defined(__APPLE__)
+	lck_mtx_t* tcb_mtx;
+	lck_mtx_t* tcb_send_mtx;
 #elif defined(__Windows__)
 	KSPIN_LOCK tcb_lock;
 	KSPIN_LOCK tcb_send_lock;
+#elif defined(__Userspace__)
+    /* TODO decide on __Userspace__ locks */
+#endif
+#if defined(__APPLE__)
+	uint32_t caller1;
+	uint32_t caller2;
+	uint32_t caller3;
 #endif
 };
 
@@ -490,7 +606,7 @@ struct sctp_tcb {
 
 #include <netinet/sctp_lock_bsd.h>
 
-#elif defined(SCTP_APPLE_FINE_GRAINED_LOCKING)
+#elif defined(__APPLE__)
 /*
  * Apple MacOS X 10.4 "Tiger"
  */
@@ -505,40 +621,66 @@ struct sctp_tcb {
 
 #include <netinet/sctp_lock_windows.h>
 
+#elif defined(__Userspace__)
+
+#include <netinet/sctp_lock_userspace.h>
+
 #else
 /*
- * Pre-5.x FreeBSD, NetBSD and others.
+ * Pre-5.x FreeBSD, and others.
  */
 #include <netinet/sctp_lock_empty.h>
 #endif
 
-#if defined(_KERNEL)
+/* TODO where to put non-_KERNEL things for __Userspace__? */
+#if defined(_KERNEL) || defined(__Userspace__)
 
-extern struct sctp_epinfo sctppcbinfo;
+/* Attention Julian, this is the extern that
+ * goes with the base info. sctp_pcb.c has
+ * the real definition.
+ */
+extern struct sctp_base_info system_base_info;
 
-int SCTP6_ARE_ADDR_EQUAL(struct in6_addr *a, struct in6_addr *b);
+#ifdef INET6
+int SCTP6_ARE_ADDR_EQUAL(struct sockaddr_in6 *a, struct sockaddr_in6 *b);
+#endif
 
 void sctp_fill_pcbinfo(struct sctp_pcbinfo *);
 
 struct sctp_ifn *
-sctp_find_ifn(struct sctp_vrf *vrf, void *ifn, uint32_t ifn_index);
+sctp_find_ifn(void *ifn, uint32_t ifn_index);
 
 struct sctp_vrf *sctp_allocate_vrf(int vrfid);
-
 struct sctp_vrf *sctp_find_vrf(uint32_t vrfid);
+void sctp_free_vrf(struct sctp_vrf *vrf);
+
+/*-
+ * Change address state, can be used if
+ * O/S supports telling transports about
+ * changes to IFA/IFN's (link layer triggers).
+ * If a ifn goes down, we will do src-addr-selection
+ * and NOT use that, as a source address. This does
+ * not stop the routing system from routing out
+ * that interface, but we won't put it as a source.
+ */
+void sctp_mark_ifa_addr_down(uint32_t vrf_id, struct sockaddr *addr, const char *if_name, uint32_t ifn_index);
+void sctp_mark_ifa_addr_up(uint32_t vrf_id, struct sockaddr *addr, const char *if_name, uint32_t ifn_index);
 
 struct sctp_ifa *
 sctp_add_addr_to_vrf(uint32_t vrfid,
 		     void *ifn, uint32_t ifn_index, uint32_t ifn_type,
 		     const char *if_name,
-		     void *ifa, struct sockaddr *addr, uint32_t ifa_flags);
+		     void *ifa, struct sockaddr *addr, uint32_t ifa_flags,
+		     int dynamic_add);
 
+void sctp_update_ifn_mtu(uint32_t ifn_index, uint32_t mtu);
+
+void sctp_free_ifn(struct sctp_ifn *sctp_ifnp);
 void sctp_free_ifa(struct sctp_ifa *sctp_ifap);
 
-struct sctp_ifa *
-sctp_del_addr_from_vrf(uint32_t vrfid, struct sockaddr *addr,
-		       uint32_t ifn_index);
 
+void sctp_del_addr_from_vrf(uint32_t vrfid, struct sockaddr *addr,
+			    uint32_t ifn_index, const char *if_name);
 
 
 
@@ -547,11 +689,15 @@ struct sctp_nets *sctp_findnet(struct sctp_tcb *, struct sockaddr *);
 struct sctp_inpcb *sctp_pcb_findep(struct sockaddr *, int, int, uint32_t);
 
 #if defined(__FreeBSD__) && __FreeBSD_version >= 500000
-int sctp_inpcb_bind(struct socket *, struct sockaddr *, struct thread *);
-
+int sctp_inpcb_bind(struct socket *, struct sockaddr *, 
+		    struct sctp_ifa *,struct thread *);
+#elif defined(__Windows__)
+int sctp_inpcb_bind(struct socket *, struct sockaddr *, 
+		    struct sctp_ifa *,PKTHREAD);
 #else
-int sctp_inpcb_bind(struct socket *, struct sockaddr *, struct proc *);
-
+/* struct proc is a dummy for __Userspace__ */
+int sctp_inpcb_bind(struct socket *, struct sockaddr *, 
+		    struct sctp_ifa *, struct proc *);
 #endif
 
 struct sctp_tcb *
@@ -579,38 +725,54 @@ sctp_findassociation_ep_addr(struct sctp_inpcb **,
     struct sctp_tcb *);
 
 struct sctp_tcb *
+sctp_findasoc_ep_asocid_locked(struct sctp_inpcb *inp, sctp_assoc_t asoc_id, int want_lock);
+
+struct sctp_tcb *
 sctp_findassociation_ep_asocid(struct sctp_inpcb *,
     sctp_assoc_t, int);
 
 struct sctp_tcb *
 sctp_findassociation_ep_asconf(struct mbuf *, int, int,
-    struct sctphdr *, struct sctp_inpcb **, struct sctp_nets **);
+			       struct sctphdr *, struct sctp_inpcb **, struct sctp_nets **, uint32_t vrf_id);
 
-int sctp_inpcb_alloc(struct socket *);
+int sctp_inpcb_alloc(struct socket *so, uint32_t vrf_id);
 
-uint8_t sctp_is_address_on_local_host(struct sockaddr *addr, uint32_t vrf_id);
+int sctp_is_address_on_local_host(struct sockaddr *addr, uint32_t vrf_id);
 
 void sctp_inpcb_free(struct sctp_inpcb *, int, int);
 
+#if defined(__FreeBSD__) && __FreeBSD_version >= 500000
 struct sctp_tcb *
 sctp_aloc_assoc(struct sctp_inpcb *, struct sockaddr *,
-    int, int *, uint32_t, uint32_t);
+    int, int *, uint32_t, uint32_t, struct thread *);
+#elif defined(__Windows__)
+struct sctp_tcb *
+sctp_aloc_assoc(struct sctp_inpcb *, struct sockaddr *,
+    int, int *, uint32_t, uint32_t, PKTHREAD);
+#else
+/* proc will be NULL for __Userspace__ */
+struct sctp_tcb *
+sctp_aloc_assoc(struct sctp_inpcb *, struct sockaddr *,
+    int, int *, uint32_t, uint32_t, struct proc *);
+#endif
 
 int sctp_free_assoc(struct sctp_inpcb *, struct sctp_tcb *, int, int);
 
-void
-sctp_add_vtag_to_timewait(struct sctp_inpcb *, uint32_t, uint32_t);
 
-int sctp_add_local_addr_ep(struct sctp_inpcb *, struct sctp_ifa *, uint32_t);
+void sctp_delete_from_timewait(uint32_t, uint16_t, uint16_t );
+
+int sctp_is_in_timewait(uint32_t tag, uint16_t lport, uint16_t rport);
+
+void
+sctp_add_vtag_to_timewait(uint32_t tag, uint32_t time, uint16_t lport, uint16_t rport);
+
+void sctp_add_local_addr_ep(struct sctp_inpcb *, struct sctp_ifa *, uint32_t);
 
 int sctp_insert_laddr(struct sctpladdr *, struct sctp_ifa *, uint32_t);
 
 void sctp_remove_laddr(struct sctp_laddr *);
 
-int sctp_del_local_addr_ep(struct sctp_inpcb *, struct sctp_ifa *);
-
-void sctp_set_initial_cc_param(struct sctp_tcb *,struct sctp_nets *net);
-
+void sctp_del_local_addr_ep(struct sctp_inpcb *, struct sctp_ifa *);
 
 int sctp_add_remote_addr(struct sctp_tcb *, struct sockaddr *, int, int);
 
@@ -622,9 +784,8 @@ void sctp_pcb_init(void);
 
 void sctp_pcb_finish(void);
 
-int sctp_add_local_addr_assoc(struct sctp_tcb *, struct sctp_ifa *, int);
-
-int sctp_del_local_addr_assoc(struct sctp_tcb *, struct sctp_ifa *);
+void sctp_add_local_addr_restricted(struct sctp_tcb *, struct sctp_ifa *);
+void sctp_del_local_addr_restricted(struct sctp_tcb *, struct sctp_ifa *);
 
 int
 sctp_load_addresses_from_init(struct sctp_tcb *, struct mbuf *, int, int,
@@ -634,11 +795,13 @@ int
 sctp_set_primary_addr(struct sctp_tcb *, struct sockaddr *,
     struct sctp_nets *);
 
-int sctp_is_vtag_good(struct sctp_inpcb *, uint32_t, struct timeval *);
+int sctp_is_vtag_good(struct sctp_inpcb *, uint32_t, uint16_t lport, uint16_t rport, struct timeval *, int);
 
 /* void sctp_drain(void); */
 
 int sctp_destination_is_reachable(struct sctp_tcb *, struct sockaddr *);
+
+int sctp_swap_inpcb_for_listen(struct sctp_inpcb *inp);
 
 /*-
  * Null in last arg inpcb indicate run on ALL ep's. Specific inp in last arg

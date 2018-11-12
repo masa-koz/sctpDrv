@@ -1,0 +1,22 @@
+!include ..\sources.inc
+
+USE_MSVCRT=1
+
+TARGETNAME=libcompat
+TARGETTYPE=LIBRARY
+
+INCLUDES= \
+    ..\include; \
+    ..\..\inc; \
+    c:\work\stdint
+
+SOURCES= \
+    delay.cpp \
+    error.c \
+    gettimeofday.c \
+    inet_ntop.c \
+    inet_pton.c \
+    signal.c \
+    snprintf.c \
+    string.c \
+    Thread.c

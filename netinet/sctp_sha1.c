@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2001-2006, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2001-2007, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -35,12 +35,9 @@
 __FBSDID("$FreeBSD$");
 #endif
 
-#include <netinet/sctp_os_windows.h>
 #include <netinet/sctp_sha1.h>
-#if !defined(__Windows__)
 #include <sys/param.h>
 #include <sys/systm.h>
-#endif
 void
 SHA1_Init(struct sha1_context *ctx)
 {

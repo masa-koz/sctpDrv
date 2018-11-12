@@ -1,0 +1,83 @@
+<?xml version='1.0'?>
+<!--
+/*
+ * Copyright (c) 2008 CO-CONV, Corp. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+-->
+<Wix xmlns='http://schemas.microsoft.com/wix/2003/01/wi'>
+	<Module Id='XPModule' Guid='8AA5FB35-3E7C-4dc5-83D6-0CFF31726D9D' Language='1033' Version='1.0.0.0'>
+		<Package Id='FBD03664-C4BF-4f34-8AFB-5F1632CAAA93' Description='SCTP Driver Module for XP'
+			Comments='This is for XP'
+			Manufacturer='CO-CONV, Corp.' InstallerVersion='200' Compressed='yes' />
+
+		<Directory Id="TARGETDIR" Name="SourceDir">
+			<Directory Id='SystemFolder' Name='System'>
+				<Component Id="Provider" Guid="6207A0D6-E083-4faf-905A-B49A29E7CBBE">
+					<File Id="SctpSp_Dll" Name="sctpsp.dll"
+						Vital="yes" KeyPath="yes"
+						Source="bin\xp32\sctpsp.dll" />
+					<File Id="Sctpmon_Dll" Name="sctpmon.dll"
+						Vital="yes" KeyPath="no"
+						Source="bin\xp32\sctpmon.dll" />
+				</Component>
+				<Directory Id="DriverDirectory" Name="drivers">
+					<Component Id="Driver" Guid="{8D7D1678-0E2A-4011-979C-020265D4D56A}">
+						<File Id="Sctp_Sys" Name="sctp.sys"
+							Vital="yes" KeyPath="yes"
+							Source="bin\xp32\sctp.sys" />
+					</Component>
+				</Directory>
+
+			</Directory>
+
+			<Directory Id='ProgramFilesFolder' Name='PFiles'>
+				<Directory Id='SctpDriver' Name='sctpDrv'>
+					<Directory Id='Bin' Name='bin'>
+						<Component Id="bins" Guid="B57C854D-E86E-4557-998B-3B57BA2628ED">
+							<File Id="Sp_Install_Exe" Name="spinst.exe" LongName="spinstall.exe"
+								Vital="yes" KeyPath="yes"
+								Source="bin\xp32\spinstall.exe" />
+							<File Id="Echo_Client_Exe" Name="echo_c.exe" LongName="echo_client.exe"
+								Vital="yes" KeyPath="no"
+								Source="bin\xp32\echo_client.exe" />
+							<File Id="Echo_Server_Exe" Name="echo_s.exe" LongName="echo_server.exe"
+								Vital="yes" KeyPath="no"
+								Source="bin\xp32\echo_server.exe" />
+							<File Id="Iperf_Exe" Name="iperf.exe"
+								Vital="yes" KeyPath="no"
+								Source="bin\xp32\iperf.exe" />
+						</Component>
+					</Directory>
+					<Directory Id='Lib' Name='lib'>
+						<Component Id="Libs" Guid="0BD85430-1EF8-4613-A6B1-876B9BC3BED2">
+							<File Id="SctpSp_Lib" Name="sctpsp.lib"
+								Vital="yes" KeyPath="yes"
+								Source="..\sp\dll\objfre_wxp_x86\i386\sctpsp.lib" />
+						</Component>
+					</Directory>
+				</Directory>
+			</Directory>
+		</Directory>
+	</Module>
+</Wix>

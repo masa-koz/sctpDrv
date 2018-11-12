@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+/*
+ * Copyright (c) 2008 CO-CONV, Corp. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2003/01/wi">
+	<Product Id="091AEEFA-1485-43c9-A0CC-A673C2C2F9D3" Name="SctpDriver 1.0"
+		Version="1.00.0000" Manufacturer="CO-CONV, Corp."
+		Language="1041" Codepage="932">
+
+		<Package Id="????????-????-????-????-????????????"
+			Description="sctpDrv"
+			Comments="SCTP Driver" InstallerVersion="200"
+			Platforms="Intel" Manufacturer="CO-CONV, Corp."
+			Keywords="Installer,MSI,Database" Languages="1041" Compressed="yes" SummaryCodepage="932"/>
+
+		<Condition Message='sctpDrv runs only on 32bit Windows XP/Vista'>
+			Version9X OR
+			VersionNT64 OR
+			(VersionNT AND (VersionNT = 400) OR
+			(VersionNT AND (VersionNT = 500)
+		</Condition>
+		<Media Id="1" Cabinet="Product.cab" EmbedCab="yes" />
+
+		<Directory Id="TARGETDIR" Name="SourceDir">
+			<Directory Id='INSTALLDIR' Name=".">
+				<Merge Id='Vista32Module' Language='1033' src='module-vista32.msm' DiskId='1' />
+				<Merge Id='XP32Module' Language='1033' src='module-xp32.msm' DiskId='1' />
+				<Merge Id='CommonModule' Language='1033' src='module-common.msm' DiskId='1' />
+			</Directory>
+			<Component Id="SctpDrvRegistry" Guid="08EB8A26-24B8-4c00-B745-0666048642B0">
+				<Registry Id='sctpmon' Root='HKLM' Key='SOFTWARE\Microsoft\NetSh'
+				    Name='sctpmon' Type='string'>
+					<RegistryValue>sctpmon.dll</RegistryValue>
+				</Registry>
+			</Component>
+		</Directory>
+
+		<Feature Id="Complete" Title='sctpDrv' Description='The complete package.' 
+			Display='expand' Level='1' ConfigurableDirectory='INSTALLDIR'>
+			<Feature Id='XP32Program' Title='XP32Program' Description='The executable for XP 32bit.' Level='3' Display='hidden'>
+				<Condition Level="1">VersionNT = 501</Condition>
+				<MergeRef Id='XP32Module' />
+				<MergeRef Id='CommonModule' />
+				<ComponentRef Id='SctpDrvRegistry' />
+			</Feature>
+			<Feature Id='Vista32Program' Title='Vista32Program' Description='The executable for Vista 32bit.' Level='3' Display='hidden'>
+				<Condition Level="1">VersionNT = 600</Condition>
+				<MergeRef Id='Vista32Module' />
+				<MergeRef Id='CommonModule' />
+				<ComponentRef Id='SctpDrvRegistry' />
+			</Feature>
+		</Feature>
+		<InstallExecuteSequence>
+			<Custom Action='SctpInstallDriverForXP.SetProperty' After='InstallFiles'>(VersionNT = 501) AND (NOT (REMOVE="ALL"))</Custom>
+			<Custom Action="SctpInstallDriverForXP" After="SctpInstallDriverForXP.SetProperty">(VersionNT = 501) AND (NOT (REMOVE="ALL"))</Custom>
+			<Custom Action='SctpInstallDriverForVista32.SetProperty' After='InstallFiles'>(VersionNT = 600) AND (NOT (REMOVE="ALL"))</Custom>
+			<Custom Action="SctpInstallDriverForVista32" After="SctpInstallDriverForVista32.SetProperty">(VersionNT = 600) AND (NOT (REMOVE="ALL"))</Custom>
+
+			<Custom Action='SctpInstallProvider32.SetProperty' After='InstallFiles'>NOT (REMOVE="ALL")</Custom>
+			<Custom Action="SctpInstallProvider32" After="SctpInstallProvider32.SetProperty">NOT (REMOVE="ALL")</Custom>
+
+			<Custom Action='SctpUnInstallDriverForXP.SetProperty' After='RemoveFiles'>(VersionNT = 501) AND (REMOVE="ALL")</Custom>
+			<Custom Action="SctpUnInstallDriverForXP" After="SctpUnInstallDriverForXP.SetProperty">(VersionNT = 501) AND (REMOVE="ALL")</Custom>
+			<Custom Action='SctpUnInstallDriverForVista32.SetProperty' After='RemoveFiles'>(VersionNT = 600) AND (REMOVE="ALL")</Custom>
+			<Custom Action="SctpUnInstallDriverForVista32" After="SctpUnInstallDriverForVista32.SetProperty">(VersionNT = 600) AND (REMOVE="ALL")</Custom>
+
+
+			<Custom Action='SctpUnInstallProvider32.SetProperty' After='RemoveFiles'>REMOVE="ALL"</Custom>
+			<Custom Action="SctpUnInstallProvider32" After="SctpUnInstallProvider32.SetProperty">REMOVE="ALL"</Custom>
+			<ScheduleReboot After="InstallFinalize">REMOVE="ALL"</ScheduleReboot>
+		</InstallExecuteSequence>
+	</Product>
+</Wix>

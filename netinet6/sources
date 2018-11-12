@@ -1,0 +1,17 @@
+!include ..\sources.inc
+
+TARGETNAME=netinet6
+TARGETTYPE=LIBRARY
+
+TARGETLIBS=
+
+INCLUDES= \
+    ..; \
+    ..\algrthms; \
+    ..\subr; \
+    $(DDK_INC_PATH)
+
+SOURCES= \
+    in6.c \
+    in6_proto.c \
+    sctp6_usrreq.c

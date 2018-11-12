@@ -1,0 +1,8 @@
+sctp.sys retail
+sctpsp.dll retail
+sctpmon.dll retail
+spinstall.exe retail
+echo_client.exe retail
+echo_server.exe retail
+echo_server2.exe retail
+iperf.exe retail

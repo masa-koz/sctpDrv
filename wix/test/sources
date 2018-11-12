@@ -1,0 +1,21 @@
+C_DEFINES=$(C_DEFINES) -DUNICODE -D_UNICODE
+USE_MSVCRT=1
+
+TARGETNAME=test
+TARGETTYPE=PROGRAM
+
+UMENTRY=wmain
+UMTYPE=console
+
+TARGETLIBS= \
+    $(SDK_LIB_PATH)\kernel32.lib \
+    $(SDK_LIB_PATH)\user32.lib \
+    $(SDK_LIB_PATH)\ws2_32.lib
+
+INCLUDES= \
+    ..\..\sp
+
+SOURCES= \
+    ..\setup.c \
+    test.c \
+    test.rc

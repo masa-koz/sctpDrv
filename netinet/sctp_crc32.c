@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2001-2007, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2001-2007, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -33,13 +33,12 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_crc32.c,v 1.7 2007/04/14 09:44:09 rrs Exp $");
+__FBSDID("$FreeBSD: head/sys/netinet/sctp_crc32.c 184027 2008-10-18 15:53:31Z rrs $");
 #endif
 
 #include <netinet/sctp_os.h>
 #include <netinet/sctp_crc32.h>
 
-#ifndef SCTP_USE_ADLER32
 
 
 /**
@@ -82,12 +81,14 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_crc32.c,v 1.7 2007/04/14 09:44:09 rrs E
  * The following CRC lookup table was generated automagically using the
  * following model parameters:
  *
- * Generator Polynomial = ................. 0x1EDC6F41 Generator Polynomial
- * Length = .......... 32 bits Reflected Bits = ....................... TRUE
- * Table Generation Offset = .............. 32 bits Number of Slices =
- * ..................... 8 slices Slice Lengths = ........................ 8
- * 8 8 8 8 8 8 8 Directory Name = ....................... .\ File Name =
- * ............................ 8x256_tables.c
+ * Generator Polynomial = ................. 0x1EDC6F41
+ * Generator Polynomial Length = .......... 32 bits
+ * Reflected Bits = ....................... TRUE
+ * Table Generation Offset = .............. 32 bits
+ * Number of Slices = ..................... 8 slices
+ * Slice Lengths = ........................ 8 8 8 8 8 8 8 8
+ * Directory Name = ....................... .\
+ * File Name = ............................ 8x256_tables.c
  */
 
 uint32_t sctp_crc_tableil8_o32[256] =
@@ -136,12 +137,14 @@ uint32_t sctp_crc_tableil8_o32[256] =
  * The following CRC lookup table was generated automagically using the
  * following model parameters:
  *
- * Generator Polynomial = ................. 0x1EDC6F41 Generator Polynomial
- * Length = .......... 32 bits Reflected Bits = ....................... TRUE
- * Table Generation Offset = .............. 32 bits Number of Slices =
- * ..................... 8 slices Slice Lengths = ........................ 8
- * 8 8 8 8 8 8 8 Directory Name = ....................... .\ File Name =
- * ............................ 8x256_tables.c
+ * Generator Polynomial = ................. 0x1EDC6F41
+ * Generator Polynomial Length = .......... 32 bits
+ * Reflected Bits = ....................... TRUE
+ * Table Generation Offset = .............. 32 bits
+ * Number of Slices = ..................... 8 slices
+ * Slice Lengths = ........................ 8 8 8 8 8 8 8 8
+ * Directory Name = ....................... .\
+ * File Name = ............................ 8x256_tables.c
  */
 
 uint32_t sctp_crc_tableil8_o40[256] =
@@ -190,12 +193,14 @@ uint32_t sctp_crc_tableil8_o40[256] =
  * The following CRC lookup table was generated automagically using the
  * following model parameters:
  *
- * Generator Polynomial = ................. 0x1EDC6F41 Generator Polynomial
- * Length = .......... 32 bits Reflected Bits = ....................... TRUE
- * Table Generation Offset = .............. 32 bits Number of Slices =
- * ..................... 8 slices Slice Lengths = ........................ 8
- * 8 8 8 8 8 8 8 Directory Name = ....................... .\ File Name =
- * ............................ 8x256_tables.c
+ * Generator Polynomial = ................. 0x1EDC6F41
+ * Generator Polynomial Length = .......... 32 bits
+ * Reflected Bits = ....................... TRUE
+ * Table Generation Offset = .............. 32 bits
+ * Number of Slices = ..................... 8 slices
+ * Slice Lengths = ........................ 8 8 8 8 8 8 8 8
+ * Directory Name = ....................... .\
+ * File Name = ............................ 8x256_tables.c
  */
 
 uint32_t sctp_crc_tableil8_o48[256] =
@@ -244,12 +249,14 @@ uint32_t sctp_crc_tableil8_o48[256] =
  * The following CRC lookup table was generated automagically using the
  * following model parameters:
  *
- * Generator Polynomial = ................. 0x1EDC6F41 Generator Polynomial
- * Length = .......... 32 bits Reflected Bits = ....................... TRUE
- * Table Generation Offset = .............. 32 bits Number of Slices =
- * ..................... 8 slices Slice Lengths = ........................ 8
- * 8 8 8 8 8 8 8 Directory Name = ....................... .\ File Name =
- * ............................ 8x256_tables.c
+ * Generator Polynomial = ................. 0x1EDC6F41
+ * Generator Polynomial Length = .......... 32 bits
+ * Reflected Bits = ....................... TRUE
+ * Table Generation Offset = .............. 32 bits
+ * Number of Slices = ..................... 8 slices
+ * Slice Lengths = ........................ 8 8 8 8 8 8 8 8
+ * Directory Name = ....................... .\
+ * File Name = ............................ 8x256_tables.c
  */
 
 uint32_t sctp_crc_tableil8_o56[256] =
@@ -298,12 +305,14 @@ uint32_t sctp_crc_tableil8_o56[256] =
  * The following CRC lookup table was generated automagically using the
  * following model parameters:
  *
- * Generator Polynomial = ................. 0x1EDC6F41 Generator Polynomial
- * Length = .......... 32 bits Reflected Bits = ....................... TRUE
- * Table Generation Offset = .............. 32 bits Number of Slices =
- * ..................... 8 slices Slice Lengths = ........................ 8
- * 8 8 8 8 8 8 8 Directory Name = ....................... .\ File Name =
- * ............................ 8x256_tables.c
+ * Generator Polynomial = ................. 0x1EDC6F41
+ * Generator Polynomial Length = .......... 32 bits
+ * Reflected Bits = ....................... TRUE
+ * Table Generation Offset = .............. 32 bits
+ * Number of Slices = ..................... 8 slices
+ * Slice Lengths = ........................ 8 8 8 8 8 8 8 8
+ * Directory Name = ....................... .\
+ * File Name = ............................ 8x256_tables.c
  */
 
 uint32_t sctp_crc_tableil8_o64[256] =
@@ -352,12 +361,14 @@ uint32_t sctp_crc_tableil8_o64[256] =
  * The following CRC lookup table was generated automagically using the
  * following model parameters:
  *
- * Generator Polynomial = ................. 0x1EDC6F41 Generator Polynomial
- * Length = .......... 32 bits Reflected Bits = ....................... TRUE
- * Table Generation Offset = .............. 32 bits Number of Slices =
- * ..................... 8 slices Slice Lengths = ........................ 8
- * 8 8 8 8 8 8 8 Directory Name = ....................... .\ File Name =
- * ............................ 8x256_tables.c
+ * Generator Polynomial = ................. 0x1EDC6F41
+ * Generator Polynomial Length = .......... 32 bits
+ * Reflected Bits = ....................... TRUE
+ * Table Generation Offset = .............. 32 bits
+ * Number of Slices = ..................... 8 slices
+ * Slice Lengths = ........................ 8 8 8 8 8 8 8 8
+ * Directory Name = ....................... .\
+ * File Name = ............................ 8x256_tables.c
  */
 
 uint32_t sctp_crc_tableil8_o72[256] =
@@ -406,12 +417,14 @@ uint32_t sctp_crc_tableil8_o72[256] =
  * The following CRC lookup table was generated automagically using the
  * following model parameters:
  *
- * Generator Polynomial = ................. 0x1EDC6F41 Generator Polynomial
- * Length = .......... 32 bits Reflected Bits = ....................... TRUE
- * Table Generation Offset = .............. 32 bits Number of Slices =
- * ..................... 8 slices Slice Lengths = ........................ 8
- * 8 8 8 8 8 8 8 Directory Name = ....................... .\ File Name =
- * ............................ 8x256_tables.c
+ * Generator Polynomial = ................. 0x1EDC6F41
+ * Generator Polynomial Length = .......... 32 bits
+ * Reflected Bits = ....................... TRUE
+ * Table Generation Offset = .............. 32 bits
+ * Number of Slices = ..................... 8 slices
+ * Slice Lengths = ........................ 8 8 8 8 8 8 8 8
+ * Directory Name = ....................... .\
+ * File Name = ............................ 8x256_tables.c
  */
 
 uint32_t sctp_crc_tableil8_o80[256] =
@@ -460,12 +473,14 @@ uint32_t sctp_crc_tableil8_o80[256] =
  * The following CRC lookup table was generated automagically using the
  * following model parameters:
  *
- * Generator Polynomial = ................. 0x1EDC6F41 Generator Polynomial
- * Length = .......... 32 bits Reflected Bits = ....................... TRUE
- * Table Generation Offset = .............. 32 bits Number of Slices =
- * ..................... 8 slices Slice Lengths = ........................ 8
- * 8 8 8 8 8 8 8 Directory Name = ....................... .\ File Name =
- * ............................ 8x256_tables.c
+ * Generator Polynomial = ................. 0x1EDC6F41
+ * Generator Polynomial Length = .......... 32 bits
+ * Reflected Bits = ....................... TRUE
+ * Table Generation Offset = .............. 32 bits
+ * Number of Slices = ..................... 8 slices
+ * Slice Lengths = ........................ 8 8 8 8 8 8 8 8
+ * Directory Name = ....................... .\
+ * File Name = ............................ 8x256_tables.c
  */
 
 uint32_t sctp_crc_tableil8_o88[256] =
@@ -585,13 +600,13 @@ update_crc32(uint32_t crc32c,
     unsigned char *buffer,
     unsigned int length)
 {
-	uint32_t offset;
+	uint32_t to_even_word;
 
 	if (length == 0) {
 		return (crc32c);
 	}
-	offset = ((uintptr_t) buffer) & 0x3;
-	return (sctp_crc32c_sb8_64_bit(crc32c, buffer, length, offset));
+	to_even_word = (4 - (((uintptr_t) buffer) & 0x3));
+	return (sctp_crc32c_sb8_64_bit(crc32c, buffer, length, to_even_word));
 }
 
 uint32_t sctp_crc_c[256] = {
@@ -679,7 +694,7 @@ old_update_crc32(uint32_t crc32c,
 
 
 uint32_t
-sctp_csum_finalize(uint32_t crc32c)
+sctp_finalize_crc32(uint32_t crc32c)
 {
 	uint32_t result;
 
@@ -710,5 +725,3 @@ sctp_csum_finalize(uint32_t crc32c)
 #endif
 	return (crc32c);
 }
-
-#endif

@@ -1,23 +1,35 @@
+!include ..\sources.inc
+
 MAKEDIR=.
 TARGETNAME=netinet
 TARGETTYPE=LIBRARY
-TARGETPATH=.
+
 TARGETLIBS=
-C_DEFINES=-DNTVERSION=$(NTVERSION) -D_KERNEL -D__Windows__ -DINET -DINET6 -DSCTP_DEBUG -DHAVE_SALEN -DLOCKDEBUG=1
-#C_DEFINES=-DNTVERSION=$(NTVERSION) -D_KERNEL -D__Windows__ -DINET -DINET6 -DSCTP_DEBUG -DHAVE_SALEN -DLOCKDEBUG=0
-MSC_WARNING_LEVEL=/W1 /WX
-INCLUDES=..;..\algrthms;..\common;..\inc;..\subr;$(DDK_INC_PATH)
-SOURCES=	\
-    sctp_windows_addr.c \
-    sctp_pcb.c \
+
+INCLUDES= \
+    ..; \
+    ..\inc; \
+    ..\algrthms; \
+    ..\subr; \
+    ..\net; \
+    ..\netinet; \
+    $(DDK_INC_PATH)
+
+SOURCES= \
+    in_proto.c \
+    in.c \
+    sctp_asconf.c \
+    sctp_auth.c \
+    sctp_bsd_addr.c \
+    sctp_cc_functions.c \
+    sctp_crc32.c \
+    sctp_indata.c \
     sctp_input.c \
     sctp_output.c \
-    sctp_indata.c \
+    sctp_pcb.c \
+    sctp_peeloff.c \
+    sctp_sha1.c \
+    sctp_sysctl.c \
     sctp_timer.c \
     sctp_usrreq.c \
-    sctputil.c \
-    sctp_crc32.c \
-    sctp_sha1.c \
-    sctp_auth.c \
-    sctp_asconf.c \
-    sctp_sysctl.c
+    sctputil.c

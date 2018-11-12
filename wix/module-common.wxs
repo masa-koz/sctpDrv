@@ -1,0 +1,63 @@
+<?xml version='1.0'?>
+<!--
+/*
+ * Copyright (c) 2008 CO-CONV, Corp. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+-->
+ 
+<Wix xmlns='http://schemas.microsoft.com/wix/2003/01/wi'>
+	<Module Id='CommonModule' Guid='8EDBDA31-AD65-4f88-A0AA-748337D1F63C' Language='1033' Version='1.0.0.0'>
+		<Package Id='BD52C7A5-B7FD-4bce-8CB7-7B38612FCA53' Description='SCTP Driver Module'
+			Comments='Common'
+			Manufacturer='CO-CONV, Corp.' InstallerVersion='200' Compressed='yes' />
+
+		<Directory Id="TARGETDIR" Name="SourceDir">
+			<Directory Id='ProgramFilesFolder' Name='PFiles'>
+				<Directory Id='SctpDriver' Name='sctpDrv'>
+					<Directory Id='Headers' Name='inc'>
+						<Component Id="HeaderFiles" Guid="1CF837B8-D66C-431d-869D-A1FB988BC14D">
+							<File Id="WS2SCTP_H" Name="ws2sctp.h" LongName="ws2sctp.h"
+								Vital="yes" KeyPath="no"
+								Source="..\apps\inc\ws2sctp.h" />
+						</Component>
+					</Directory>
+
+					<Directory Id='Samples' Name='src'>
+						<Component Id="Sources" Guid="ECAB9AB8-EC17-45fb-9E1B-7AB23730F6EC">
+							<File Id="Echo_Client_C" Name="echo_c.c" LongName="echo_client.c"
+								Vital="yes" KeyPath="yes"
+								Source="..\apps\echo_client\echo_client.c" />
+							<File Id="Echo_Server_C" Name="echo_s.c" LongName="echo_server.c"
+								Vital="yes" KeyPath="no"
+								Source="..\apps\echo_server\echo_server.c" />
+							<File Id="Echo_Server2_C" Name="echo_s2.c" LongName="echo_server2.c"
+								Vital="yes" KeyPath="no"
+								Source="..\apps\echo_server2\echo_server2.c" />
+						</Component>
+					</Directory>
+				</Directory>
+			</Directory>
+		</Directory>
+	</Module>
+</Wix>

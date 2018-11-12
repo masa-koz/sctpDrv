@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2001-2007, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2001-2008, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -30,7 +30,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_auth.h,v 1.3 2007/03/15 11:27:13 rrs Exp $");
+__FBSDID("$FreeBSD: head/sys/netinet/sctp_auth.h 185694 2008-12-06 13:19:54Z rrs $");
 #endif
 
 #ifndef __SCTP_AUTH_H__
@@ -70,7 +70,9 @@ typedef struct sctp_key {
 typedef struct sctp_shared_key {
 	LIST_ENTRY(sctp_shared_key) next;
 	sctp_key_t *key;	/* key text */
+	uint32_t refcount;	/* reference count */
 	uint16_t keyid;		/* shared key ID */
+	uint8_t deactivated;	/* key is deactivated */
 } sctp_sharedkey_t;
 
 LIST_HEAD(sctp_keyhead, sctp_shared_key);
@@ -93,10 +95,11 @@ typedef struct sctp_authinfo {
 	sctp_key_t *random;	/* local random key (concatenated) */
 	uint32_t random_len;	/* local random number length for param */
 	sctp_key_t *peer_random;/* peer's random key (concatenated) */
+	sctp_key_t *assoc_key;	/* cached concatenated send key */
+	sctp_key_t *recv_key;	/* cached concatenated recv key */
+	uint16_t active_keyid;	/* active send keyid */
 	uint16_t assoc_keyid;	/* current send keyid (cached) */
 	uint16_t recv_keyid;	/* last recv keyid (cached) */
-	sctp_key_t *assoc_key;	/* cached send key */
-	sctp_key_t *recv_key;	/* cached recv key */
 } sctp_authinfo_t;
 
 
@@ -119,11 +122,11 @@ extern int sctp_auth_add_chunk(uint8_t chunk, sctp_auth_chklist_t *list);
 extern int sctp_auth_delete_chunk(uint8_t chunk, sctp_auth_chklist_t *list);
 extern size_t sctp_auth_get_chklist_size(const sctp_auth_chklist_t *list);
 extern void sctp_auth_set_default_chunks(sctp_auth_chklist_t *list);
-extern int
-sctp_serialize_auth_chunks(const sctp_auth_chklist_t *list, uint8_t *ptr);
-extern int sctp_pack_auth_chunks(const sctp_auth_chklist_t *list, uint8_t *ptr);
-extern int
-sctp_unpack_auth_chunks(const uint8_t *ptr, uint8_t num_chunks,
+extern int sctp_serialize_auth_chunks(const sctp_auth_chklist_t *list,
+    uint8_t *ptr);
+extern int sctp_pack_auth_chunks(const sctp_auth_chklist_t *list,
+    uint8_t *ptr);
+extern int sctp_unpack_auth_chunks(const uint8_t *ptr, uint8_t num_chunks,
     sctp_auth_chklist_t *list);
 
 /* key handling */
@@ -133,21 +136,22 @@ extern void sctp_print_key(sctp_key_t *key, const char *str);
 extern void sctp_show_key(sctp_key_t *key, const char *str);
 extern sctp_key_t *sctp_generate_random_key(uint32_t keylen);
 extern sctp_key_t *sctp_set_key(uint8_t *key, uint32_t keylen);
-extern sctp_key_t *
-sctp_compute_hashkey(sctp_key_t *key1, sctp_key_t *key2,
+extern sctp_key_t *sctp_compute_hashkey(sctp_key_t *key1, sctp_key_t *key2,
     sctp_key_t *shared);
 
 /* shared key handling */
 extern sctp_sharedkey_t *sctp_alloc_sharedkey(void);
 extern void sctp_free_sharedkey(sctp_sharedkey_t *skey);
-extern sctp_sharedkey_t *
-sctp_find_sharedkey(struct sctp_keyhead *shared_keys, uint16_t key_id);
-extern void
-sctp_insert_sharedkey(struct sctp_keyhead *shared_keys,
+extern sctp_sharedkey_t *sctp_find_sharedkey(struct sctp_keyhead *shared_keys,
+    uint16_t key_id);
+extern int sctp_insert_sharedkey(struct sctp_keyhead *shared_keys,
     sctp_sharedkey_t *new_skey);
-extern int
-sctp_copy_skeylist(const struct sctp_keyhead *src,
+extern int sctp_copy_skeylist(const struct sctp_keyhead *src,
     struct sctp_keyhead *dest);
+/* ref counts on shared keys, by key id */
+extern void sctp_auth_key_acquire(struct sctp_tcb *stcb, uint16_t keyid);
+extern void sctp_auth_key_release(struct sctp_tcb *stcb, uint16_t keyid);
+
 
 /* hmac list handling */
 extern sctp_hmaclist_t *sctp_alloc_hmaclist(uint8_t num_hmacs);
@@ -167,25 +171,19 @@ extern void sctp_free_authinfo(sctp_authinfo_t *authinfo);
 /* keyed-HMAC functions */
 extern uint32_t sctp_get_auth_chunk_len(uint16_t hmac_algo);
 extern uint32_t sctp_get_hmac_digest_len(uint16_t hmac_algo);
-extern uint32_t
-sctp_hmac(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
+extern uint32_t sctp_hmac(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
     uint8_t *text, uint32_t textlen, uint8_t *digest);
-extern int
-sctp_verify_hmac(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
-    uint8_t *text, uint32_t textlen, uint8_t *digest,
-    uint32_t digestlen);
-extern uint32_t
-sctp_compute_hmac(uint16_t hmac_algo, sctp_key_t *key,
+extern int sctp_verify_hmac(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
+    uint8_t *text, uint32_t textlen, uint8_t *digest, uint32_t digestlen);
+extern uint32_t sctp_compute_hmac(uint16_t hmac_algo, sctp_key_t *key,
     uint8_t *text, uint32_t textlen, uint8_t *digest);
 extern int sctp_auth_is_supported_hmac(sctp_hmaclist_t *list, uint16_t id);
 
 /* mbuf versions */
-extern uint32_t
-sctp_hmac_m(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
+extern uint32_t sctp_hmac_m(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
+    struct mbuf *m, uint32_t m_offset, uint8_t *digest, uint32_t trailer);
+extern uint32_t sctp_compute_hmac_m(uint16_t hmac_algo, sctp_key_t *key,
     struct mbuf *m, uint32_t m_offset, uint8_t *digest);
-extern uint32_t
-sctp_compute_hmac_m(uint16_t hmac_algo, sctp_key_t *key, struct mbuf *m,
-    uint32_t m_offset, uint8_t *digest);
 
 /*
  * authentication routines
@@ -196,31 +194,24 @@ extern int sctp_delete_sharedkey(struct sctp_tcb *stcb, uint16_t keyid);
 extern int sctp_delete_sharedkey_ep(struct sctp_inpcb *inp, uint16_t keyid);
 extern int sctp_auth_setactivekey(struct sctp_tcb *stcb, uint16_t keyid);
 extern int sctp_auth_setactivekey_ep(struct sctp_inpcb *inp, uint16_t keyid);
+extern int sctp_deact_sharedkey(struct sctp_tcb *stcb, uint16_t keyid);
+extern int sctp_deact_sharedkey_ep(struct sctp_inpcb *inp, uint16_t keyid);
 
-extern void
-sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
+extern void sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
     uint32_t offset, uint32_t length);
-extern void
-sctp_fill_hmac_digest_m(struct mbuf *m, uint32_t auth_offset,
-    struct sctp_auth_chunk *auth,
-    struct sctp_tcb *stcb);
-extern struct mbuf *
-sctp_add_auth_chunk(struct mbuf *m, struct mbuf **m_end,
-    struct sctp_auth_chunk **auth_ret,
-    uint32_t *offset, struct sctp_tcb *stcb,
-    uint8_t chunk);
-extern int
-sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *ch,
+extern void sctp_fill_hmac_digest_m(struct mbuf *m, uint32_t auth_offset,
+    struct sctp_auth_chunk *auth, struct sctp_tcb *stcb, uint16_t key_id);
+extern struct mbuf *sctp_add_auth_chunk(struct mbuf *m, struct mbuf **m_end,
+    struct sctp_auth_chunk **auth_ret, uint32_t *offset,
+    struct sctp_tcb *stcb, uint8_t chunk);
+extern int sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *ch,
     struct mbuf *m, uint32_t offset);
-extern void
-sctp_notify_authentication(struct sctp_tcb *stcb,
-    uint32_t indication, uint16_t keyid,
-    uint16_t alt_keyid);
-extern int
-sctp_validate_init_auth_params(struct mbuf *m, int offset, int limit);
-extern void
-sctp_initialize_auth_params(struct sctp_inpcb *inp, struct sctp_tcb *stcb);
-
+extern void sctp_notify_authentication(struct sctp_tcb *stcb,
+    uint32_t indication, uint16_t keyid, uint16_t alt_keyid, int so_locked);
+extern int sctp_validate_init_auth_params(struct mbuf *m, int offset,
+    int limit);
+extern void sctp_initialize_auth_params(struct sctp_inpcb *inp,
+    struct sctp_tcb *stcb);
 
 /* test functions */
 extern void sctp_test_hmac_sha1(void);

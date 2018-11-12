@@ -1,0 +1,20 @@
+C_DEFINES=$(C_DEFINES) -D__Windows__ -D_UNICODE -DUNICODE
+USE_MSVCRT=1
+
+TARGETNAME=echo_client
+TARGETTYPE=PROGRAM
+
+UMENTRY=wmain
+UMTYPE=console
+
+INCLUDES= \
+    ..\inc
+
+TARGETLIBS= \
+    $(DDK_LIB_PATH)\ws2_32.lib \
+    ..\..\sp\dll\obj$(BUILD_ALT_DIR)\*\sctpsp.lib
+
+SOURCES= \
+    echo_client.c \
+    echo_client.rc
+

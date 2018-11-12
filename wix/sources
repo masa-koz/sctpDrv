@@ -1,0 +1,19 @@
+C_DEFINES=$(C_DEFINES) -DUNICODE -D_UNICODE
+USE_MSVCRT=1
+
+TARGETNAME=setup
+TARGETTYPE=DYNLINK
+
+UMTYPE=windows
+
+TARGETLIBS= \
+    $(SDK_LIB_PATH)\kernel32.lib \
+    $(SDK_LIB_PATH)\user32.lib \
+    $(SDK_LIB_PATH)\advapi32.lib \
+    $(SDK_LIB_PATH)\ws2_32.lib
+
+INCLUDES= \
+    ..\sp
+
+SOURCES= \
+    setup.c

@@ -1,0 +1,27 @@
+C_DEFINES=$(C_DEFINES) -D__Windows__
+USE_MSVCRT=1
+
+TARGETNAME=api_tests
+TARGETTYPE=PROGRAM
+
+UMENTRY=main
+UMTYPE=console
+
+INCLUDES= \
+    ..\inc
+
+TARGETLIBS= \
+    $(DDK_LIB_PATH)\ws2_32.lib \
+    ..\..\sp\dll\obj$(BUILD_ALT_DIR)\*\sctpsp.lib
+
+SOURCES= \
+    api_tests.c \
+    register_tests.c \
+    sctp_utilities.c \
+    test_bind.c \
+    test_connect.c \
+    test_sctp_bindx.c \
+    test_sctp_recvmsg.c \
+    test_sctp_sendmsg.c \
+    test_sctp_sockopts.c
+

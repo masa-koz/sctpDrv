@@ -1,0 +1,73 @@
+<?xml version='1.0'?>
+<!--
+/*
+ * Copyright (c) 2008 CO-CONV, Corp. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+-->
+<Wix xmlns='http://schemas.microsoft.com/wix/2003/01/wi'>
+	<Fragment Id="Setup">
+		<CustomAction Id='SctpInstallDriverForXP' BinaryKey='Setup' DllEntry='SctpInstallDriver'
+			Execute='deferred' Impersonate='no' Return='check'
+			/>
+		<CustomAction Id="SctpInstallDriverForXP.SetProperty" Return="check"
+			Property="SctpInstallDriverForXP" Value="xp"
+			/>
+
+		<CustomAction Id='SctpInstallDriverForVista32' BinaryKey='Setup' DllEntry='SctpInstallDriver'
+			Execute='deferred' Impersonate='no' Return='check'
+			/>
+		<CustomAction Id="SctpInstallDriverForVista32.SetProperty" Return="check"
+			Property="SctpInstallDriverForVista32" Value="vista32"
+			/>
+
+		<CustomAction Id='SctpUnInstallDriverForXP' BinaryKey='Setup' DllEntry='SctpUnInstallDriver'
+			Execute='deferred' Impersonate='no' Return='check'
+			/>
+		<CustomAction Id="SctpUnInstallDriverForXP.SetProperty" Return="check"
+			Property="SctpUnInstallDriverForXP" Value="xp"
+			/>
+
+		<CustomAction Id='SctpUnInstallDriverForVista32' BinaryKey='Setup' DllEntry='SctpUnInstallDriver'
+			Execute='deferred' Impersonate='no' Return='check'
+			/>
+		<CustomAction Id="SctpUnInstallDriverForVista32.SetProperty" Return="check"
+			Property="SctpUnInstallDriverForVista32" Value="vista32"
+			/>
+
+		<CustomAction Id='SctpInstallProvider32' BinaryKey='Setup' DllEntry='SctpInstallProvider'
+			Execute='deferred' Impersonate='no' Return='check'
+			/>
+		<CustomAction Id="SctpInstallProvider32.SetProperty" Return="check"
+			Property="SctpInstallProvider32" Value=""
+			/>
+
+		<CustomAction Id='SctpUnInstallProvider32' BinaryKey='Setup' DllEntry='SctpUnInstallProvider'
+			Execute='deferred' Impersonate='no' Return='check'
+			/>
+		<CustomAction Id="SctpUnInstallProvider32.SetProperty" Return="check"
+			Property="SctpUnInstallProvider32" Value=""
+			/>
+		<Binary Id='Setup' src='objfre_wxp_x86\i386\setup.dll' />
+	</Fragment>
+</Wix>

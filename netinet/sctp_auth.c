@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2001-2007, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2001-2008, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -30,7 +30,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_auth.c,v 1.6 2007/03/31 11:47:29 rrs Exp $");
+__FBSDID("$FreeBSD: head/sys/netinet/sctp_auth.c 185694 2008-12-06 13:19:54Z rrs $");
 #endif
 
 #include <netinet/sctp_os.h>
@@ -45,15 +45,12 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_auth.c,v 1.6 2007/03/31 11:47:29 rrs Ex
 #include <netinet/sctp_auth.h>
 
 #ifdef SCTP_DEBUG
-#define SCTP_AUTH_DEBUG		(sctp_debug_on & SCTP_DEBUG_AUTH1)
-#define SCTP_AUTH_DEBUG2	(sctp_debug_on & SCTP_DEBUG_AUTH2)
-#endif				/* SCTP_DEBUG */
+#define SCTP_AUTH_DEBUG		(SCTP_BASE_SYSCTL(sctp_debug_on) & SCTP_DEBUG_AUTH1)
+#define SCTP_AUTH_DEBUG2	(SCTP_BASE_SYSCTL(sctp_debug_on) & SCTP_DEBUG_AUTH2)
+#endif /* SCTP_DEBUG */
 
-#if defined(__Windows__)
+
 void
-#else
-inline void
-#endif
 sctp_clear_chunklist(sctp_auth_chklist_t *chklist)
 {
 	bzero(chklist, sizeof(*chklist));
@@ -66,13 +63,9 @@ sctp_alloc_chunklist(void)
 	sctp_auth_chklist_t *chklist;
 
 	SCTP_MALLOC(chklist, sctp_auth_chklist_t *, sizeof(*chklist),
-		    "AUTH chklist");
+		    SCTP_M_AUTH_CL);
 	if (chklist == NULL) {
-#ifdef SCTP_DEBUG
-		if (sctp_debug_on & SCTP_AUTH_DEBUG) {
-			printf("sctp_alloc_chunklist: failed to get memory!\n");
-		}
-#endif				/* SCTP_DEBUG */
+		SCTPDBG(SCTP_DEBUG_AUTH1, "sctp_alloc_chunklist: failed to get memory!\n");
 	} else {
 		sctp_clear_chunklist(chklist);
 	}
@@ -83,7 +76,7 @@ void
 sctp_free_chunklist(sctp_auth_chklist_t *list)
 {
 	if (list != NULL)
-		SCTP_FREE(list);
+		SCTP_FREE(list, SCTP_M_AUTH_CL);
 }
 
 sctp_auth_chklist_t *
@@ -124,11 +117,9 @@ sctp_auth_add_chunk(uint8_t chunk, sctp_auth_chklist_t *list)
 	if (list->chunks[chunk] == 0) {
 		list->chunks[chunk] = 1;
 		list->num_chunks++;
-#ifdef SCTP_DEBUG
-		if (SCTP_AUTH_DEBUG)
-			printf("SCTP: added chunk %u (0x%02x) to Auth list\n",
-			    chunk, chunk);
-#endif
+		SCTPDBG(SCTP_DEBUG_AUTH1,
+			"SCTP: added chunk %u (0x%02x) to Auth list\n",
+			chunk, chunk);
 	}
 	return (0);
 }
@@ -150,20 +141,14 @@ sctp_auth_delete_chunk(uint8_t chunk, sctp_auth_chklist_t *list)
 	if (list->chunks[chunk] == 1) {
 		list->chunks[chunk] = 0;
 		list->num_chunks--;
-#ifdef SCTP_DEBUG
-		if (SCTP_AUTH_DEBUG)
-			printf("SCTP: deleted chunk %u (0x%02x) from Auth list\n",
-			    chunk, chunk);
-#endif
+		SCTPDBG(SCTP_DEBUG_AUTH1,
+			"SCTP: deleted chunk %u (0x%02x) from Auth list\n",
+			chunk, chunk);
 	}
 	return (0);
 }
 
-#if defined(__Windows__)
 size_t
-#else
-inline size_t
-#endif
 sctp_auth_get_chklist_size(const sctp_auth_chklist_t *list)
 {
 	if (list == NULL)
@@ -178,8 +163,8 @@ sctp_auth_get_chklist_size(const sctp_auth_chklist_t *list)
 void
 sctp_auth_set_default_chunks(sctp_auth_chklist_t *list)
 {
-	sctp_auth_add_chunk(SCTP_ASCONF, list);
-	sctp_auth_add_chunk(SCTP_ASCONF_ACK, list);
+	(void)sctp_auth_add_chunk(SCTP_ASCONF, list);
+	(void)sctp_auth_add_chunk(SCTP_ASCONF_ACK, list);
 }
 
 /*
@@ -248,7 +233,7 @@ sctp_unpack_auth_chunks(const uint8_t *ptr, uint8_t num_chunks,
 	if (num_chunks <= 32) {
 		/* just pull them, one byte each */
 		for (i = 0; i < num_chunks; i++) {
-			sctp_auth_add_chunk(*ptr++, list);
+			(void)sctp_auth_add_chunk(*ptr++, list);
 		}
 		size = num_chunks;
 	} else {
@@ -258,7 +243,7 @@ sctp_unpack_auth_chunks(const uint8_t *ptr, uint8_t num_chunks,
 		for (index = 0; index < 32; index++) {
 			for (offset = 0; offset < 8; offset++) {
 				if (ptr[index] & (1 << offset)) {
-					sctp_auth_add_chunk((index * 8) + offset, list);
+					(void)sctp_auth_add_chunk((index * 8) + offset, list);
 				}
 			}
 		}
@@ -277,7 +262,7 @@ sctp_alloc_key(uint32_t keylen)
 	sctp_key_t *new_key;
 
 	SCTP_MALLOC(new_key, sctp_key_t *, sizeof(*new_key) + keylen,
-		    "AUTH key");
+		    SCTP_M_AUTH_KY);
 	if (new_key == NULL) {
 		/* out of memory */
 		return (NULL);
@@ -290,7 +275,7 @@ void
 sctp_free_key(sctp_key_t *key)
 {
 	if (key != NULL)
-		SCTP_FREE(key);
+		SCTP_FREE(key,SCTP_M_AUTH_KY);
 }
 
 void
@@ -331,11 +316,7 @@ sctp_show_key(sctp_key_t *key, const char *str)
 	}
 }
 
-#if defined(__Windows__)
 static uint32_t
-#else
-static inline uint32_t
-#endif
 sctp_get_keylen(sctp_key_t *key)
 {
 	if (key != NULL)
@@ -380,9 +361,11 @@ sctp_set_key(uint8_t *key, uint32_t keylen)
 	return (new_key);
 }
 
-/*
+/*-
  * given two keys of variable size, compute which key is "larger/smaller"
- * returns: 1 if key1 > key2 -1 if key1 < key2 0 if key1 = key2
+ * returns:  1 if key1 > key2
+ *          -1 if key1 < key2
+ *           0 if key1 = key2
  */
 static int
 sctp_compare_key(sctp_key_t *key1, sctp_key_t *key2)
@@ -475,6 +458,7 @@ sctp_compute_hashkey(sctp_key_t *key1, sctp_key_t *key2, sctp_key_t *shared)
 
 	/* concatenate the keys */
 	if (sctp_compare_key(key1, key2) <= 0) {
+#ifdef SCTP_AUTH_DRAFT_04
 		/* key is key1 + shared + key2 */
 		if (sctp_get_keylen(key1)) {
 			bcopy(key1->key, key_ptr, key1->keylen);
@@ -488,7 +472,23 @@ sctp_compute_hashkey(sctp_key_t *key1, sctp_key_t *key2, sctp_key_t *shared)
 			bcopy(key2->key, key_ptr, key2->keylen);
 			key_ptr += key2->keylen;
 		}
+#else
+		/* key is shared + key1 + key2 */
+		if (sctp_get_keylen(shared)) {
+			bcopy(shared->key, key_ptr, shared->keylen);
+			key_ptr += shared->keylen;
+		}
+		if (sctp_get_keylen(key1)) {
+			bcopy(key1->key, key_ptr, key1->keylen);
+			key_ptr += key1->keylen;
+		}
+		if (sctp_get_keylen(key2)) {
+			bcopy(key2->key, key_ptr, key2->keylen);
+			key_ptr += key2->keylen;
+		}
+#endif
 	} else {
+#ifdef SCTP_AUTH_DRAFT_04
 		/* key is key2 + shared + key1 */
 		if (sctp_get_keylen(key2)) {
 			bcopy(key2->key, key_ptr, key2->keylen);
@@ -502,6 +502,21 @@ sctp_compute_hashkey(sctp_key_t *key1, sctp_key_t *key2, sctp_key_t *shared)
 			bcopy(key1->key, key_ptr, key1->keylen);
 			key_ptr += key1->keylen;
 		}
+#else
+		/* key is shared + key2 + key1 */
+		if (sctp_get_keylen(shared)) {
+			bcopy(shared->key, key_ptr, shared->keylen);
+			key_ptr += shared->keylen;
+		}
+		if (sctp_get_keylen(key2)) {
+			bcopy(key2->key, key_ptr, key2->keylen);
+			key_ptr += key2->keylen;
+		}
+		if (sctp_get_keylen(key1)) {
+			bcopy(key1->key, key_ptr, key1->keylen);
+			key_ptr += key1->keylen;
+		}
+#endif
 	}
 	return (new_key);
 }
@@ -513,23 +528,28 @@ sctp_alloc_sharedkey(void)
 	sctp_sharedkey_t *new_key;
 
 	SCTP_MALLOC(new_key, sctp_sharedkey_t *, sizeof(*new_key),
-		    "AUTH skey");
+		    SCTP_M_AUTH_KY);
 	if (new_key == NULL) {
 		/* out of memory */
 		return (NULL);
 	}
 	new_key->keyid = 0;
 	new_key->key = NULL;
+	new_key->refcount = 1;
+	new_key->deactivated = 0;
 	return (new_key);
 }
 
 void
-sctp_free_sharedkey(sctp_sharedkey_t * skey)
+sctp_free_sharedkey(sctp_sharedkey_t *skey)
 {
-	if (skey != NULL) {
+	if (skey == NULL)
+		return;
+
+	if (SCTP_DECREMENT_AND_CHECK_REFCOUNT(&skey->refcount)) {
 		if (skey->key != NULL)
 			sctp_free_key(skey->key);
-		SCTP_FREE(skey);
+		SCTP_FREE(skey, SCTP_M_AUTH_KY);
 	}
 }
 
@@ -545,41 +565,93 @@ sctp_find_sharedkey(struct sctp_keyhead *shared_keys, uint16_t key_id)
 	return (NULL);
 }
 
-void
+int
 sctp_insert_sharedkey(struct sctp_keyhead *shared_keys,
-    sctp_sharedkey_t *new_skey)
+		      sctp_sharedkey_t *new_skey)
 {
 	sctp_sharedkey_t *skey;
 
 	if ((shared_keys == NULL) || (new_skey == NULL))
-		return;
+		return (EINVAL);
 
 	/* insert into an empty list? */
 	if (SCTP_LIST_EMPTY(shared_keys)) {
 		LIST_INSERT_HEAD(shared_keys, new_skey, next);
-		return;
+		return (0);
 	}
 	/* insert into the existing list, ordered by key id */
 	LIST_FOREACH(skey, shared_keys, next) {
 		if (new_skey->keyid < skey->keyid) {
 			/* insert it before here */
 			LIST_INSERT_BEFORE(skey, new_skey, next);
-			return;
+			return (0);
 		} else if (new_skey->keyid == skey->keyid) {
 			/* replace the existing key */
-#ifdef SCTP_DEBUG
-			if (SCTP_AUTH_DEBUG)
-				printf("replacing shared key id %u\n", new_skey->keyid);
-#endif
+			/* verify this key *can* be replaced */
+			if ((skey->deactivated) && (skey->refcount > 1)) {
+				SCTPDBG(SCTP_DEBUG_AUTH1,
+					"can't replace shared key id %u\n",
+					new_skey->keyid);
+				return (EBUSY);
+			}
+			SCTPDBG(SCTP_DEBUG_AUTH1,
+				"replacing shared key id %u\n",
+				new_skey->keyid);
 			LIST_INSERT_BEFORE(skey, new_skey, next);
 			LIST_REMOVE(skey, next);
 			sctp_free_sharedkey(skey);
-			return;
+			return (0);
 		}
 		if (LIST_NEXT(skey, next) == NULL) {
 			/* belongs at the end of the list */
 			LIST_INSERT_AFTER(skey, new_skey, next);
-			return;
+			return (0);
+		}
+	}
+	/* shouldn't reach here */
+	return (0);
+}
+
+void
+sctp_auth_key_acquire(struct sctp_tcb *stcb, uint16_t key_id)
+{
+	sctp_sharedkey_t *skey;
+	
+	/* find the shared key */
+	skey = sctp_find_sharedkey(&stcb->asoc.shared_keys, key_id);
+ 	
+	/* bump the ref count */
+	if (skey) {
+		atomic_add_int(&skey->refcount, 1);
+		SCTPDBG(SCTP_DEBUG_AUTH2,
+			"%s: stcb %p key %u refcount acquire to %d\n",
+			__FUNCTION__, stcb, key_id, skey->refcount);
+	}
+}
+
+void
+sctp_auth_key_release(struct sctp_tcb *stcb, uint16_t key_id)
+{
+	sctp_sharedkey_t *skey;
+	
+	/* find the shared key */
+	skey = sctp_find_sharedkey(&stcb->asoc.shared_keys, key_id);
+	
+	/* decrement the ref count */
+	if (skey) {
+		sctp_free_sharedkey(skey);
+		SCTPDBG(SCTP_DEBUG_AUTH2,
+			"%s: stcb %p key %u refcount release to %d\n",
+			__FUNCTION__, stcb, key_id, skey->refcount);
+
+		/* see if a notification should be generated */
+		if ((skey->refcount <= 1) && (skey->deactivated)) {
+			/* notify ULP that key is no longer used */
+			sctp_ulp_notify(SCTP_NOTIFY_AUTH_FREE_KEY, stcb,
+					key_id, 0, SCTP_SO_NOT_LOCKED);
+			SCTPDBG(SCTP_DEBUG_AUTH2,
+				"%s: stcb %p key %u no longer used, %d\n",
+				__FUNCTION__, stcb, key_id, skey->refcount);
 		}
 	}
 }
@@ -613,7 +685,7 @@ sctp_copy_skeylist(const struct sctp_keyhead *src, struct sctp_keyhead *dest)
 	LIST_FOREACH(skey, src, next) {
 		new_skey = sctp_copy_sharedkey(skey);
 		if (new_skey != NULL) {
-			sctp_insert_sharedkey(dest, new_skey);
+			(void)sctp_insert_sharedkey(dest, new_skey);
 			count++;
 		}
 	}
@@ -629,7 +701,7 @@ sctp_alloc_hmaclist(uint8_t num_hmacs)
 
 	alloc_size = sizeof(*new_list) + num_hmacs * sizeof(new_list->hmac[0]);
 	SCTP_MALLOC(new_list, sctp_hmaclist_t *, alloc_size,
-		    "AUTH HMAC list");
+		    SCTP_M_AUTH_HL);
 	if (new_list == NULL) {
 		/* out of memory */
 		return (NULL);
@@ -643,7 +715,7 @@ void
 sctp_free_hmaclist(sctp_hmaclist_t *list)
 {
 	if (list != NULL) {
-		SCTP_FREE(list);
+		SCTP_FREE(list,SCTP_M_AUTH_HL);
 		list = NULL;
 	}
 }
@@ -651,13 +723,12 @@ sctp_free_hmaclist(sctp_hmaclist_t *list)
 int
 sctp_auth_add_hmacid(sctp_hmaclist_t *list, uint16_t hmac_id)
 {
+	int i;
 	if (list == NULL)
 		return (-1);
 	if (list->num_algo == list->max_algo) {
-#ifdef SCTP_DEBUG
-		if (SCTP_AUTH_DEBUG)
-			printf("SCTP: HMAC id list full, ignoring add %u\n", hmac_id);
-#endif
+		SCTPDBG(SCTP_DEBUG_AUTH1,
+			"SCTP: HMAC id list full, ignoring add %u\n", hmac_id);
 		return (-1);
 	}
 	if ((hmac_id != SCTP_AUTH_HMAC_ID_SHA1) &&
@@ -672,10 +743,14 @@ sctp_auth_add_hmacid(sctp_hmaclist_t *list, uint16_t hmac_id)
 	    (hmac_id != SCTP_AUTH_HMAC_ID_MD5)) {
 		return (-1);
 	}
-#ifdef SCTP_DEBUG
-	if (SCTP_AUTH_DEBUG)
-		printf("SCTP: add HMAC id %u to list\n", hmac_id);
-#endif
+	/* Now is it already in the list */
+	for (i=0; i<list->num_algo; i++) {
+		if (list->hmac[i] == hmac_id) {
+			/* already in list */
+			return (-1);
+		}
+	}
+	SCTPDBG(SCTP_DEBUG_AUTH1, "SCTP: add HMAC id %u to list\n", hmac_id);
 	list->hmac[list->num_algo++] = hmac_id;
 	return (0);
 }
@@ -708,14 +783,14 @@ sctp_default_supported_hmaclist(void)
 	new_list = sctp_alloc_hmaclist(2);
 	if (new_list == NULL)
 		return (NULL);
-	sctp_auth_add_hmacid(new_list, SCTP_AUTH_HMAC_ID_SHA1);
-	sctp_auth_add_hmacid(new_list, SCTP_AUTH_HMAC_ID_SHA256);
+	(void)sctp_auth_add_hmacid(new_list, SCTP_AUTH_HMAC_ID_SHA1);
+	(void)sctp_auth_add_hmacid(new_list, SCTP_AUTH_HMAC_ID_SHA256);
 	return (new_list);
 }
 
-/*
- * HMAC algos are listed in priority/preference order find the best HMAC id
- * to use for the peer based on local support
+/*-
+ * HMAC algos are listed in priority/preference order
+ * find the best HMAC id to use for the peer based on local support
  */
 uint16_t
 sctp_negotiate_hmacid(sctp_hmaclist_t *peer, sctp_hmaclist_t *local)
@@ -735,10 +810,9 @@ sctp_negotiate_hmacid(sctp_hmaclist_t *peer, sctp_hmaclist_t *local)
 #endif
 
 				/* found the "best" one */
-#ifdef SCTP_DEBUG
-				if (SCTP_AUTH_DEBUG)
-					printf("SCTP: negotiated peer HMAC id %u\n", peer->hmac[i]);
-#endif
+				SCTPDBG(SCTP_DEBUG_AUTH1, 
+					"SCTP: negotiated peer HMAC id %u\n",
+					peer->hmac[i]);
 				return (peer->hmac[i]);
 			}
 		}
@@ -747,9 +821,9 @@ sctp_negotiate_hmacid(sctp_hmaclist_t *peer, sctp_hmaclist_t *local)
 	return (SCTP_AUTH_HMAC_ID_RSVD);
 }
 
-/*
- * serialize the HMAC algo list and return space used caller must guarantee
- * ptr has appropriate space
+/*-
+ * serialize the HMAC algo list and return space used
+ * caller must guarantee ptr has appropriate space
  */
 int
 sctp_serialize_hmaclist(sctp_hmaclist_t *list, uint8_t *ptr)
@@ -793,7 +867,8 @@ sctp_alloc_authinfo(void)
 	sctp_authinfo_t *new_authinfo;
 
 	SCTP_MALLOC(new_authinfo, sctp_authinfo_t *, sizeof(*new_authinfo),
-		    "AUTH info");
+		    SCTP_M_AUTH_IF);
+
 	if (new_authinfo == NULL) {
 		/* out of memory */
 		return (NULL);
@@ -818,15 +893,11 @@ sctp_free_authinfo(sctp_authinfo_t *authinfo)
 		sctp_free_key(authinfo->recv_key);
 
 	/* We are NOT dynamically allocating authinfo's right now... */
-	/* SCTP_FREE(authinfo); */
+	/* SCTP_FREE(authinfo, SCTP_M_AUTH_??); */
 }
 
 
-#if defined(__Windows__)
 uint32_t
-#else
-inline uint32_t
-#endif
 sctp_get_auth_chunk_len(uint16_t hmac_algo)
 {
 	int size;
@@ -858,14 +929,10 @@ sctp_get_hmac_digest_len(uint16_t hmac_algo)
 	default:
 		/* unknown HMAC algorithm: can't do anything */
 		return (0);
-	}			/* end switch */
+	} /* end switch */
 }
 
-#if defined(__Windows__)
-static int
-#else
 static inline int
-#endif
 sctp_get_hmac_block_len(uint16_t hmac_algo)
 {
 	switch (hmac_algo) {
@@ -873,8 +940,8 @@ sctp_get_hmac_block_len(uint16_t hmac_algo)
 	case SCTP_AUTH_HMAC_ID_MD5:
 #ifdef HAVE_SHA224
 	case SCTP_AUTH_HMAC_ID_SHA224:
-		return (64);
 #endif
+		return (64);
 #ifdef HAVE_SHA2
 	case SCTP_AUTH_HMAC_ID_SHA256:
 		return (64);
@@ -886,9 +953,12 @@ sctp_get_hmac_block_len(uint16_t hmac_algo)
 	default:
 		/* unknown HMAC algorithm: can't do anything */
 		return (0);
-	}			/* end switch */
+	} /* end switch */
 }
 
+#if defined(__Userspace__)
+/* __Userspace__ SHA1_Init is defined in libcrypto.a (libssl-dev on Ubuntu) */
+#endif
 static void
 sctp_hmac_init(uint16_t hmac_algo, sctp_hash_context_t *ctx)
 {
@@ -918,7 +988,7 @@ sctp_hmac_init(uint16_t hmac_algo, sctp_hash_context_t *ctx)
 	default:
 		/* unknown HMAC algorithm: can't do anything */
 		return;
-	}			/* end switch */
+	} /* end switch */
 }
 
 static void
@@ -951,7 +1021,7 @@ sctp_hmac_update(uint16_t hmac_algo, sctp_hash_context_t *ctx,
 	default:
 		/* unknown HMAC algorithm: can't do anything */
 		return;
-	}			/* end switch */
+	} /* end switch */
 }
 
 static void
@@ -985,10 +1055,10 @@ sctp_hmac_final(uint16_t hmac_algo, sctp_hash_context_t *ctx,
 	default:
 		/* unknown HMAC algorithm: can't do anything */
 		return;
-	}			/* end switch */
+	} /* end switch */
 }
 
-/*
+/*-
  * Keyed-Hashing for Message Authentication: FIPS 198 (RFC 2104)
  *
  * Compute the HMAC digest using the desired hash key, text, and HMAC
@@ -1060,7 +1130,7 @@ sctp_hmac(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
 /* mbuf version */
 uint32_t
 sctp_hmac_m(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
-    struct mbuf *m, uint32_t m_offset, uint8_t *digest)
+    struct mbuf *m, uint32_t m_offset, uint8_t *digest, uint32_t trailer)
 {
 	uint32_t digestlen;
 	uint32_t blocklen;
@@ -1113,8 +1183,13 @@ sctp_hmac_m(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
 	}
 	/* now use the rest of the mbuf chain for the text */
 	while (m_tmp != NULL) {
-		sctp_hmac_update(hmac_algo, &ctx, mtod(m_tmp, uint8_t *) + m_offset,
-		    SCTP_BUF_LEN(m_tmp) - m_offset);
+		if((SCTP_BUF_NEXT(m_tmp) == NULL) && trailer){
+			sctp_hmac_update(hmac_algo, &ctx, mtod(m_tmp, uint8_t *) + m_offset,
+					 SCTP_BUF_LEN(m_tmp) - (trailer+m_offset));
+		} else {
+			sctp_hmac_update(hmac_algo, &ctx, mtod(m_tmp, uint8_t *) + m_offset,
+					 SCTP_BUF_LEN(m_tmp) - m_offset);
+		}
 
 		/* clear the offset since it's only for the first mbuf */
 		m_offset = 0;
@@ -1131,9 +1206,10 @@ sctp_hmac_m(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
 	return (digestlen);
 }
 
-/*
+/*-
  * verify the HMAC digest using the desired hash key, text, and HMAC
- * algorithm. Returns -1 on error, 0 on success.
+ * algorithm.
+ * Returns -1 on error, 0 on success.
  */
 int
 sctp_verify_hmac(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
@@ -1232,7 +1308,7 @@ sctp_compute_hmac_m(uint16_t hmac_algo, sctp_key_t *key, struct mbuf *m,
 		key->keylen = digestlen;
 		bcopy(temp, key->key, key->keylen);
 	}
-	return (sctp_hmac_m(hmac_algo, key->key, key->keylen, m, m_offset, digest));
+	return (sctp_hmac_m(hmac_algo, key->key, key->keylen, m, m_offset, digest, 0));
 }
 
 int
@@ -1252,10 +1328,10 @@ sctp_auth_is_supported_hmac(sctp_hmaclist_t *list, uint16_t id)
 }
 
 
-/*
- * clear any cached key(s) if they match the given key id on an association
- * the cached key(s) will be recomputed and re-cached at next use. ASSUMES
- * TCB_LOCK is already held
+/*-
+ * clear any cached key(s) if they match the given key id on an association.
+ * the cached key(s) will be recomputed and re-cached at next use.
+ * ASSUMES TCB_LOCK is already held
  */
 void
 sctp_clear_cachedkeys(struct sctp_tcb *stcb, uint16_t keyid)
@@ -1273,9 +1349,10 @@ sctp_clear_cachedkeys(struct sctp_tcb *stcb, uint16_t keyid)
 	}
 }
 
-/*
+/*-
  * clear any cached key(s) if they match the given key id for all assocs on
- * an association ASSUMES INP_WLOCK is already held
+ * an endpoint.
+ * ASSUMES INP_WLOCK is already held
  */
 void
 sctp_clear_cachedkeys_ep(struct sctp_inpcb *inp, uint16_t keyid)
@@ -1293,8 +1370,9 @@ sctp_clear_cachedkeys_ep(struct sctp_inpcb *inp, uint16_t keyid)
 	}
 }
 
-/*
- * delete a shared key from an association ASSUMES TCB_LOCK is already held
+/*-
+ * delete a shared key from an association
+ * ASSUMES TCB_LOCK is already held
  */
 int
 sctp_delete_sharedkey(struct sctp_tcb *stcb, uint16_t keyid)
@@ -1305,12 +1383,16 @@ sctp_delete_sharedkey(struct sctp_tcb *stcb, uint16_t keyid)
 		return (-1);
 
 	/* is the keyid the assoc active sending key */
-	if (keyid == stcb->asoc.authinfo.assoc_keyid)
+	if (keyid == stcb->asoc.authinfo.active_keyid)
 		return (-1);
 
 	/* does the key exist? */
 	skey = sctp_find_sharedkey(&stcb->asoc.shared_keys, keyid);
 	if (skey == NULL)
+		return (-1);
+
+	/* are there other refcount holders on the key? */
+	if (skey->refcount > 1)
 		return (-1);
 
 	/* remove it */
@@ -1322,34 +1404,28 @@ sctp_delete_sharedkey(struct sctp_tcb *stcb, uint16_t keyid)
 	return (0);
 }
 
-/*
- * deletes a shared key from the endpoint ASSUMES INP_WLOCK is already held
+/*-
+ * deletes a shared key from the endpoint
+ * ASSUMES INP_WLOCK is already held
  */
 int
 sctp_delete_sharedkey_ep(struct sctp_inpcb *inp, uint16_t keyid)
 {
 	sctp_sharedkey_t *skey;
-	struct sctp_tcb *stcb;
 
 	if (inp == NULL)
 		return (-1);
 
-	/* is the keyid the active sending key on the endpoint or any assoc */
+	/* is the keyid the active sending key on the endpoint */
 	if (keyid == inp->sctp_ep.default_keyid)
 		return (-1);
-	LIST_FOREACH(stcb, &inp->sctp_asoc_list, sctp_tcblist) {
-		SCTP_TCB_LOCK(stcb);
-		if (keyid == stcb->asoc.authinfo.assoc_keyid) {
-			SCTP_TCB_UNLOCK(stcb);
-			return (-1);
-		}
-		SCTP_TCB_UNLOCK(stcb);
-	}
 
 	/* does the key exist? */
 	skey = sctp_find_sharedkey(&inp->sctp_ep.shared_keys, keyid);
 	if (skey == NULL)
 		return (-1);
+
+	/* endpoint keys are not refcounted */
 
 	/* remove it */
 	LIST_REMOVE(skey, next);
@@ -1360,54 +1436,37 @@ sctp_delete_sharedkey_ep(struct sctp_inpcb *inp, uint16_t keyid)
 	return (0);
 }
 
-/*
- * set the active key on an association ASSUME TCB_LOCK is already held
+/*-
+ * set the active key on an association
+ * ASSUMES TCB_LOCK is already held
  */
 int
 sctp_auth_setactivekey(struct sctp_tcb *stcb, uint16_t keyid)
 {
 	sctp_sharedkey_t *skey = NULL;
-	sctp_key_t *key = NULL;
-	int using_ep_key = 0;
 
 	/* find the key on the assoc */
 	skey = sctp_find_sharedkey(&stcb->asoc.shared_keys, keyid);
 	if (skey == NULL) {
-		/* if not on the assoc, find the key on the endpoint */
-		SCTP_INP_RLOCK(stcb->sctp_ep);
-		skey = sctp_find_sharedkey(&stcb->sctp_ep->sctp_ep.shared_keys,
-		    keyid);
-		using_ep_key = 1;
-	}
-	if (skey == NULL) {
 		/* that key doesn't exist */
-		if (using_ep_key)
-			SCTP_INP_RUNLOCK(stcb->sctp_ep);
 		return (-1);
 	}
-	/* get the shared key text */
-	key = skey->key;
+	if ((skey->deactivated) && (skey->refcount > 1)) {
+		/* can't reactivate a deactivated key with other refcounts */
+		return (-1);
+	}
 
-	/* free any existing cached key */
-	if (stcb->asoc.authinfo.assoc_key != NULL)
-		sctp_free_key(stcb->asoc.authinfo.assoc_key);
-	/* compute a new assoc key and cache it */
-	stcb->asoc.authinfo.assoc_key =
-	    sctp_compute_hashkey(stcb->asoc.authinfo.random,
-	    stcb->asoc.authinfo.peer_random, key);
-	stcb->asoc.authinfo.assoc_keyid = keyid;
-#ifdef SCTP_DEBUG
-	if (SCTP_AUTH_DEBUG)
-		sctp_print_key(stcb->asoc.authinfo.assoc_key, "Assoc Key");
-#endif
+	/* set the (new) active key */
+	stcb->asoc.authinfo.active_keyid = keyid;
+	/* reset the deactivated flag */
+	skey->deactivated = 0;
 
-	if (using_ep_key)
-		SCTP_INP_RUNLOCK(stcb->sctp_ep);
 	return (0);
 }
 
-/*
- * set the active key on an endpoint ASSUMES INP_WLOCK is already held
+/*-
+ * set the active key on an endpoint
+ * ASSUMES INP_WLOCK is already held
  */
 int
 sctp_auth_setactivekey_ep(struct sctp_inpcb *inp, uint16_t keyid)
@@ -1421,6 +1480,70 @@ sctp_auth_setactivekey_ep(struct sctp_inpcb *inp, uint16_t keyid)
 		return (-1);
 	}
 	inp->sctp_ep.default_keyid = keyid;
+	return (0);
+}
+
+/*-
+ * deactivates a shared key from the association
+ * ASSUMES INP_WLOCK is already held
+ */
+int
+sctp_deact_sharedkey(struct sctp_tcb *stcb, uint16_t keyid)
+{
+	sctp_sharedkey_t *skey;
+
+	if (stcb == NULL)
+		return (-1);
+
+	/* is the keyid the assoc active sending key */
+	if (keyid == stcb->asoc.authinfo.active_keyid)
+		return (-1);
+
+	/* does the key exist? */
+	skey = sctp_find_sharedkey(&stcb->asoc.shared_keys, keyid);
+	if (skey == NULL)
+		return (-1);
+
+	/* are there other refcount holders on the key? */
+	if (skey->refcount == 1) {
+		/* no other users, send a notification for this key */
+		sctp_ulp_notify(SCTP_NOTIFY_AUTH_FREE_KEY, stcb, keyid, 0,
+				SCTP_SO_LOCKED);
+	}
+
+	/* mark the key as deactivated */
+	skey->deactivated = 1;
+
+	return (0);
+}
+
+/*-
+ * deactivates a shared key from the endpoint
+ * ASSUMES INP_WLOCK is already held
+ */
+int
+sctp_deact_sharedkey_ep(struct sctp_inpcb *inp, uint16_t keyid)
+{
+	sctp_sharedkey_t *skey;
+
+	if (inp == NULL)
+		return (-1);
+
+	/* is the keyid the active sending key on the endpoint */
+	if (keyid == inp->sctp_ep.default_keyid)
+		return (-1);
+
+	/* does the key exist? */
+	skey = sctp_find_sharedkey(&inp->sctp_ep.shared_keys, keyid);
+	if (skey == NULL)
+		return (-1);
+
+	/* endpoint keys are not refcounted */
+
+	/* remove it */
+	LIST_REMOVE(skey, next);
+	sctp_free_sharedkey(skey);	/* frees skey->key as well */
+
 	return (0);
 }
 
@@ -1461,7 +1584,7 @@ sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
 			if (plen > sizeof(random_store))
 				break;
 			phdr = sctp_get_next_param(m, offset,
-			    (struct sctp_paramhdr *)random_store, plen);
+			    (struct sctp_paramhdr *)random_store, min(plen, sizeof(random_store)));
 			if (phdr == NULL)
 				return;
 			/* save the random and length for the key */
@@ -1474,7 +1597,7 @@ sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
 			if (plen > sizeof(hmacs_store))
 				break;
 			phdr = sctp_get_next_param(m, offset,
-			    (struct sctp_paramhdr *)hmacs_store, plen);
+			    (struct sctp_paramhdr *)hmacs_store, min(plen,sizeof(hmacs_store)));
 			if (phdr == NULL)
 				return;
 			/* save the hmacs list and num for the key */
@@ -1486,7 +1609,7 @@ sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
 			stcb->asoc.local_hmacs = sctp_alloc_hmaclist(num_hmacs);
 			if (stcb->asoc.local_hmacs != NULL) {
 				for (i = 0; i < num_hmacs; i++) {
-					sctp_auth_add_hmacid(stcb->asoc.local_hmacs,
+					(void)sctp_auth_add_hmacid(stcb->asoc.local_hmacs,
 					    ntohs(hmacs->hmac_ids[i]));
 				}
 			}
@@ -1496,7 +1619,7 @@ sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
 			if (plen > sizeof(chunks_store))
 				break;
 			phdr = sctp_get_next_param(m, offset,
-			    (struct sctp_paramhdr *)chunks_store, plen);
+			    (struct sctp_paramhdr *)chunks_store, min(plen,sizeof(chunks_store)));
 			if (phdr == NULL)
 				return;
 			chunks = (struct sctp_auth_chunk_list *)phdr;
@@ -1507,7 +1630,7 @@ sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
 			else
 				stcb->asoc.local_auth_chunks = sctp_alloc_chunklist();
 			for (i = 0; i < num_chunks; i++) {
-				sctp_auth_add_chunk(chunks->chunk_types[i],
+				(void)sctp_auth_add_chunk(chunks->chunk_types[i],
 				    stcb->asoc.local_auth_chunks);
 			}
 		}
@@ -1564,9 +1687,13 @@ sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
 	/* negotiate what HMAC to use for the peer */
 	stcb->asoc.peer_hmac_id = sctp_negotiate_hmacid(stcb->asoc.peer_hmacs,
 	    stcb->asoc.local_hmacs);
+
 	/* copy defaults from the endpoint */
 	/* FIX ME: put in cookie? */
-	stcb->asoc.authinfo.assoc_keyid = stcb->sctp_ep->sctp_ep.default_keyid;
+	stcb->asoc.authinfo.active_keyid = stcb->sctp_ep->sctp_ep.default_keyid;
+	/* copy out the shared key list (by reference) from the endpoint */
+	(void)sctp_copy_skeylist(&stcb->sctp_ep->sctp_ep.shared_keys,
+				 &stcb->asoc.shared_keys);
 }
 
 /*
@@ -1574,7 +1701,7 @@ sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
  */
 void
 sctp_fill_hmac_digest_m(struct mbuf *m, uint32_t auth_offset,
-    struct sctp_auth_chunk *auth, struct sctp_tcb *stcb)
+    struct sctp_auth_chunk *auth, struct sctp_tcb *stcb, uint16_t keyid)
 {
 	uint32_t digestlen;
 	sctp_sharedkey_t *skey;
@@ -1586,15 +1713,15 @@ sctp_fill_hmac_digest_m(struct mbuf *m, uint32_t auth_offset,
 	/* zero the digest + chunk padding */
 	digestlen = sctp_get_hmac_digest_len(stcb->asoc.peer_hmac_id);
 	bzero(auth->hmac, SCTP_SIZE32(digestlen));
-	/* is an assoc key cached? */
-	if (stcb->asoc.authinfo.assoc_key == NULL) {
-		skey = sctp_find_sharedkey(&stcb->asoc.shared_keys,
-		    stcb->asoc.authinfo.assoc_keyid);
-		if (skey == NULL) {
-			/* not in the assoc list, so check the endpoint list */
-			skey = sctp_find_sharedkey(&stcb->sctp_ep->sctp_ep.shared_keys,
-			    stcb->asoc.authinfo.assoc_keyid);
+
+	/* is the desired key cached? */
+	if ((keyid != stcb->asoc.authinfo.assoc_keyid) ||
+	    (stcb->asoc.authinfo.assoc_key == NULL)) {
+		if (stcb->asoc.authinfo.assoc_key != NULL) {
+			/* free the old cached key */
+			sctp_free_key(stcb->asoc.authinfo.assoc_key);
 		}
+		skey = sctp_find_sharedkey(&stcb->asoc.shared_keys, keyid);
 		/* the only way skey is NULL is if null key id 0 is used */
 		if (skey != NULL)
 			key = skey->key;
@@ -1603,22 +1730,23 @@ sctp_fill_hmac_digest_m(struct mbuf *m, uint32_t auth_offset,
 		/* compute a new assoc key and cache it */
 		stcb->asoc.authinfo.assoc_key =
 		    sctp_compute_hashkey(stcb->asoc.authinfo.random,
-		    stcb->asoc.authinfo.peer_random, key);
+					 stcb->asoc.authinfo.peer_random, key);
+		stcb->asoc.authinfo.assoc_keyid = keyid;
+		SCTPDBG(SCTP_DEBUG_AUTH1, "caching key id %u\n",
+			stcb->asoc.authinfo.assoc_keyid);
 #ifdef SCTP_DEBUG
-		if (SCTP_AUTH_DEBUG) {
-			printf("caching key id %u\n",
-			    stcb->asoc.authinfo.assoc_keyid);
-			sctp_print_key(stcb->asoc.authinfo.assoc_key, "Assoc Key");
-		}
+		if (SCTP_AUTH_DEBUG)
+			sctp_print_key(stcb->asoc.authinfo.assoc_key,
+				       "Assoc Key");
 #endif
 	}
+
 	/* set in the active key id */
-	auth->shared_key_id = htons(stcb->asoc.authinfo.assoc_keyid);
+	auth->shared_key_id = htons(keyid);
 
 	/* compute and fill in the digest */
-	(void)sctp_compute_hmac_m(stcb->asoc.peer_hmac_id,
-	    stcb->asoc.authinfo.assoc_key,
-	    m, auth_offset, auth->hmac);
+	(void)sctp_compute_hmac_m(stcb->asoc.peer_hmac_id, stcb->asoc.authinfo.assoc_key,
+				  m, auth_offset, auth->hmac);
 }
 
 
@@ -1654,9 +1782,11 @@ sctp_bzero_m(struct mbuf *m, uint32_t m_offset, uint32_t size)
 	}
 }
 
-/*
- * process the incoming Authentication chunk return codes: -1 on any
- * authentication error 0 on authentication verification
+/*-
+ * process the incoming Authentication chunk
+ * return codes:
+ *   -1 on any authentication error
+ *    0 on authentication verification
  */
 int
 sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
@@ -1681,11 +1811,9 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
 	/* get the auth params */
 	shared_key_id = ntohs(auth->shared_key_id);
 	hmac_id = ntohs(auth->hmac_id);
-#ifdef SCTP_DEBUG
-	if (SCTP_AUTH_DEBUG)
-		printf("SCTP AUTH Chunk: shared key %u, HMAC id %u\n",
-		    shared_key_id, hmac_id);
-#endif
+	SCTPDBG(SCTP_DEBUG_AUTH1,
+		"SCTP AUTH Chunk: shared key %u, HMAC id %u\n",
+		shared_key_id, hmac_id);
 
 	/* is the indicated HMAC supported? */
 	if (!sctp_auth_is_supported_hmac(stcb->asoc.local_hmacs, hmac_id)) {
@@ -1693,15 +1821,15 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
 		struct sctp_auth_invalid_hmac *err;
 
 		SCTP_STAT_INCR(sctps_recvivalhmacid);
-#ifdef SCTP_DEBUG
-		if (SCTP_AUTH_DEBUG)
-			printf("SCTP Auth: unsupported HMAC id %u\n", hmac_id);
-#endif
+		SCTPDBG(SCTP_DEBUG_AUTH1,
+			"SCTP Auth: unsupported HMAC id %u\n",
+			hmac_id);
 		/*
 		 * report this in an Error Chunk: Unsupported HMAC
 		 * Identifier
 		 */
-		m_err = sctp_get_mbuf_for_msg(sizeof(*err), 0, M_DONTWAIT, 1, MT_HEADER);
+		m_err = sctp_get_mbuf_for_msg(sizeof(*err), 0, M_DONTWAIT,
+					      1, MT_HEADER);
 		if (m_err != NULL) {
 			/* pre-reserve some space */
 			SCTP_BUF_RESV_UF(m_err, sizeof(struct sctp_chunkhdr));
@@ -1721,20 +1849,14 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
 	if ((stcb->asoc.authinfo.recv_key == NULL) ||
 	    (stcb->asoc.authinfo.recv_keyid != shared_key_id)) {
 		/* find the shared key on the assoc first */
-		skey = sctp_find_sharedkey(&stcb->asoc.shared_keys, shared_key_id);
-		if (skey == NULL) {
-			/* if not on the assoc, find it on the endpoint */
-			skey = sctp_find_sharedkey(&stcb->sctp_ep->sctp_ep.shared_keys,
-			    shared_key_id);
-		}
+		skey = sctp_find_sharedkey(&stcb->asoc.shared_keys,
+					   shared_key_id);
 		/* if the shared key isn't found, discard the chunk */
 		if (skey == NULL) {
 			SCTP_STAT_INCR(sctps_recvivalkeyid);
-#ifdef SCTP_DEBUG
-			if (SCTP_AUTH_DEBUG)
-				printf("SCTP Auth: unknown key id %u\n",
-				    shared_key_id);
-#endif
+			SCTPDBG(SCTP_DEBUG_AUTH1,
+				"SCTP Auth: unknown key id %u\n",
+				shared_key_id);
 			return (-1);
 		}
 		/* generate a notification if this is a new key id */
@@ -1745,7 +1867,8 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
 			 * *)stcb->asoc.authinfo.recv_keyid);
 			 */
 			sctp_notify_authentication(stcb, SCTP_AUTH_NEWKEY,
-			    shared_key_id, stcb->asoc.authinfo.recv_keyid);
+			    shared_key_id, stcb->asoc.authinfo.recv_keyid,
+			    SCTP_SO_NOT_LOCKED);
 		/* compute a new recv assoc key and cache it */
 		if (stcb->asoc.authinfo.recv_key != NULL)
 			sctp_free_key(stcb->asoc.authinfo.recv_key);
@@ -1763,10 +1886,8 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
 	if (chunklen < (sizeof(*auth) + digestlen)) {
 		/* invalid digest length */
 		SCTP_STAT_INCR(sctps_recvauthfailed);
-#ifdef SCTP_DEBUG
-		if (SCTP_AUTH_DEBUG)
-			printf("SCTP Auth: chunk too short for HMAC\n");
-#endif
+		SCTPDBG(SCTP_DEBUG_AUTH1,
+			"SCTP Auth: chunk too short for HMAC\n");
 		return (-1);
 	}
 	/* save a copy of the digest, zero the pseudo header, and validate */
@@ -1778,10 +1899,8 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
 	/* compare the computed digest with the one in the AUTH chunk */
 	if (memcmp(digest, computed_digest, digestlen) != 0) {
 		SCTP_STAT_INCR(sctps_recvauthfailed);
-#ifdef SCTP_DEBUG
-		if (SCTP_AUTH_DEBUG)
-			printf("SCTP Auth: HMAC digest check failed\n");
-#endif
+		SCTPDBG(SCTP_DEBUG_AUTH1,
+			"SCTP Auth: HMAC digest check failed\n");
 		return (-1);
 	}
 	return (0);
@@ -1792,11 +1911,24 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
  */
 void
 sctp_notify_authentication(struct sctp_tcb *stcb, uint32_t indication,
-    uint16_t keyid, uint16_t alt_keyid)
+			   uint16_t keyid, uint16_t alt_keyid, int so_locked
+#if !defined(__APPLE__) && !defined(SCTP_SO_LOCK_TESTING)
+	SCTP_UNUSED
+#endif
+)
 {
 	struct mbuf *m_notify;
 	struct sctp_authkey_event *auth;
 	struct sctp_queued_to_read *control;
+
+	if((stcb == NULL) ||
+	   (stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_SOCKET_GONE) ||
+	   (stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_SOCKET_ALLGONE) ||
+	   (stcb->asoc.state & SCTP_STATE_CLOSED_SOCKET)
+		) {
+		/* If the socket is gone we are out of here */
+		return;
+	}
 
 	if (sctp_is_feature_off(stcb->sctp_ep, SCTP_PCB_FLAGS_AUTHEVNT))
 		/* event not enabled */
@@ -1834,11 +1966,11 @@ sctp_notify_authentication(struct sctp_tcb *stcb, uint32_t indication,
 	/* not that we need this */
 	control->tail_mbuf = m_notify;
 	sctp_add_to_readq(stcb->sctp_ep, stcb, control,
-	    &stcb->sctp_socket->so_rcv, 1);
+	    &stcb->sctp_socket->so_rcv, 1, so_locked);
 }
 
 
-/*
+/*-
  * validates the AUTHentication related parameters in an INIT/INIT-ACK
  * Note: currently only used for INIT as INIT-ACK is handled inline
  * with sctp_load_addresses_from_init()
@@ -1851,6 +1983,8 @@ sctp_validate_init_auth_params(struct mbuf *m, int offset, int limit)
 	int peer_supports_asconf = 0;
 	int peer_supports_auth = 0;
 	int got_random = 0, got_hmacs = 0, got_chklist = 0;
+	uint8_t saw_asconf=0;
+	uint8_t saw_asconf_ack=0;
 
 	/* go through each of the params. */
 	phdr = sctp_get_next_param(m, offset, &parm_buf, sizeof(parm_buf));
@@ -1861,7 +1995,7 @@ sctp_validate_init_auth_params(struct mbuf *m, int offset, int limit)
 		if (offset + plen > limit) {
 			break;
 		}
-		if (plen == 0) {
+		if (plen < sizeof(struct sctp_paramhdr)) {
 			break;
 		}
 		if (ptype == SCTP_SUPPORTED_CHUNK_EXT) {
@@ -1871,7 +2005,7 @@ sctp_validate_init_auth_params(struct mbuf *m, int offset, int limit)
 			int num_ent, i;
 
 			phdr = sctp_get_next_param(m, offset,
-			    (struct sctp_paramhdr *)&local_store, plen);
+			    (struct sctp_paramhdr *)&local_store, min(plen,sizeof(local_store)));
 			if (phdr == NULL) {
 				return (-1);
 			}
@@ -1896,10 +2030,8 @@ sctp_validate_init_auth_params(struct mbuf *m, int offset, int limit)
 			/* enforce the random length */
 			if (plen != (sizeof(struct sctp_auth_random) +
 				     SCTP_AUTH_RANDOM_SIZE_REQUIRED)) {
-#ifdef SCTP_DEBUG
-				if (sctp_debug_on & SCTP_DEBUG_AUTH1)
-					printf("SCTP: invalid RANDOM len\n");
-#endif
+				SCTPDBG(SCTP_DEBUG_AUTH1, 
+					"SCTP: invalid RANDOM len\n");
 				return (-1);
 			}
 		} else if (ptype == SCTP_HMAC_LIST) {
@@ -1910,7 +2042,7 @@ sctp_validate_init_auth_params(struct mbuf *m, int offset, int limit)
 			if (plen > sizeof(store))
 				break;
 			phdr = sctp_get_next_param(m, offset,
-			    (struct sctp_paramhdr *)store, plen);
+			    (struct sctp_paramhdr *)store, min(plen,sizeof(store)));
 			if (phdr == NULL)
 				return (-1);
 			hmacs = (struct sctp_auth_hmac_algo *)phdr;
@@ -1918,16 +2050,37 @@ sctp_validate_init_auth_params(struct mbuf *m, int offset, int limit)
 			    sizeof(hmacs->hmac_ids[0]);
 			/* validate the hmac list */
 			if (sctp_verify_hmac_param(hmacs, num_hmacs)) {
-#ifdef SCTP_DEBUG
-				if (sctp_debug_on & SCTP_DEBUG_AUTH1)
-					printf("SCTP: invalid HMAC param\n");
-#endif
+				SCTPDBG(SCTP_DEBUG_AUTH1,
+					"SCTP: invalid HMAC param\n");
 				return (-1);
 			}
 			got_hmacs = 1;
 		} else if (ptype == SCTP_CHUNK_LIST) {
+			int i, num_chunks;
+			uint8_t chunks_store[SCTP_SMALL_CHUNK_STORE];
 			/* did the peer send a non-empty chunk list? */
-			if (plen > 0)
+			struct sctp_auth_chunk_list *chunks = NULL;
+			phdr = sctp_get_next_param(m, offset,
+						   (struct sctp_paramhdr *)chunks_store,
+						   min(plen,sizeof(chunks_store)));
+			if (phdr == NULL)
+				return (-1);
+
+			/*-
+			 * Flip through the list and mark that the  
+			 * peer supports asconf/asconf_ack.
+			 */
+			chunks = (struct sctp_auth_chunk_list *)phdr;
+			num_chunks = plen - sizeof(*chunks);
+			for (i = 0; i < num_chunks; i++) {
+				/* record asconf/asconf-ack if listed */
+				if(chunks->chunk_types[i] == SCTP_ASCONF)
+					saw_asconf = 1;
+				if(chunks->chunk_types[i] == SCTP_ASCONF_ACK)
+					saw_asconf_ack = 1;
+
+			}
+			if (num_chunks)
 				got_chklist = 1;
 		}
 
@@ -1945,19 +2098,18 @@ sctp_validate_init_auth_params(struct mbuf *m, int offset, int limit)
 		peer_supports_auth = 0;
 	}
 	if (!peer_supports_auth && got_chklist) {
-#ifdef SCTP_DEBUG
-		if (sctp_debug_on & SCTP_DEBUG_AUTH1)
-			printf("SCTP: peer sent chunk list w/o AUTH\n");
-#endif
+		SCTPDBG(SCTP_DEBUG_AUTH1,
+			"SCTP: peer sent chunk list w/o AUTH\n");
 		return (-1);
 	}
-	if (!sctp_asconf_auth_nochk && peer_supports_asconf &&
+	if (!SCTP_BASE_SYSCTL(sctp_asconf_auth_nochk) && peer_supports_asconf &&
 	    !peer_supports_auth) {
-#ifdef SCTP_DEBUG
-		if (sctp_debug_on & SCTP_DEBUG_AUTH1)
-			printf("SCTP: peer supports ASCONF but not AUTH\n");
-#endif
+		SCTPDBG(SCTP_DEBUG_AUTH1,
+			"SCTP: peer supports ASCONF but not AUTH\n");
 		return (-1);
+	} else if ((peer_supports_asconf) && (peer_supports_auth) &&
+		   ((saw_asconf == 0) || (saw_asconf_ack == 0)) ){
+		return (-2);
 	}
 	return (0);
 }
@@ -1988,7 +2140,11 @@ sctp_initialize_auth_params(struct sctp_inpcb *inp, struct sctp_tcb *stcb)
 		}
 	}
 	/* copy defaults from the endpoint */
-	stcb->asoc.authinfo.assoc_keyid = inp->sctp_ep.default_keyid;
+	stcb->asoc.authinfo.active_keyid = inp->sctp_ep.default_keyid;
+
+	/* copy out the shared key list (by reference) from the endpoint */
+	(void)sctp_copy_skeylist(&inp->sctp_ep.shared_keys,
+				 &stcb->asoc.shared_keys);
 
 	/* now set the concatenated key (random + chunks + hmacs) */
 #ifdef SCTP_AUTH_DRAFT_04
@@ -2032,7 +2188,7 @@ sctp_initialize_auth_params(struct sctp_inpcb *inp, struct sctp_tcb *stcb)
 		plen = sizeof(*ph) + hmacs_len;
 		ph->param_length = htons(plen);
 		keylen += sizeof(*ph);
-		sctp_serialize_hmaclist(stcb->asoc.local_hmacs,
+		(void)sctp_serialize_hmaclist(stcb->asoc.local_hmacs,
 					new_key->key + keylen);
 	}
 #endif
@@ -2095,11 +2251,13 @@ sctp_test_hmac_sha1(void)
 	uint32_t digestlen = 20;
 	int failed = 0;
 
-	/*
-	 * test_case =     1 key =
-	 * 0x0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b key_len =       20
-	 * data =          "Hi There" data_len =      8 digest =
-	 * 0xb617318655057264e28bc0b6fb378c8ef146be00
+	/*-
+	 * test_case =     1
+	 * key =           0x0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b
+	 * key_len =       20
+	 * data =          "Hi There"
+	 * data_len =      8
+	 * digest =        0xb617318655057264e28bc0b6fb378c8ef146be00
 	 */
 	keylen = 20;
 	memset(key, 0x0b, keylen);
@@ -2110,10 +2268,13 @@ sctp_test_hmac_sha1(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     2 key =           "Jefe" key_len =       4 data =
-	 * "what do ya want for nothing?" data_len =      28 digest =
-	 * 0xeffcdf6ae5eb2fa2d27416d5f184df9c259a7c79
+	/*-
+	 * test_case =     2
+	 * key =           "Jefe"
+	 * key_len =       4
+	 * data =          "what do ya want for nothing?"
+	 * data_len =      28
+	 * digest =        0xeffcdf6ae5eb2fa2d27416d5f184df9c259a7c79
 	 */
 	keylen = 4;
 	strcpy(key, "Jefe");
@@ -2124,11 +2285,13 @@ sctp_test_hmac_sha1(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     3 key =
-	 * 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa key_len =       20
-	 * data =          0xdd repeated 50 times data_len =      50 digest
-	 * = 0x125d7342b9ac11cd91a39af48aa17b4f63f175d3
+	/*-
+	 * test_case =     3
+	 * key =           0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+	 * key_len =       20
+	 * data =          0xdd repeated 50 times
+	 * data_len =      50
+	 * digest =        0x125d7342b9ac11cd91a39af48aa17b4f63f175d3
 	 */
 	keylen = 20;
 	memset(key, 0xaa, keylen);
@@ -2139,11 +2302,13 @@ sctp_test_hmac_sha1(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     4 key =
-	 * 0x0102030405060708090a0b0c0d0e0f10111213141516171819 key_len = 25
-	 * data =          0xcd repeated 50 times data_len =      50 digest
-	 * =        0x4c9007f4026250c6bc8414f9bf50c86c2d7235da
+	/*-
+	 * test_case =     4
+	 * key =           0x0102030405060708090a0b0c0d0e0f10111213141516171819
+	 * key_len =       25
+	 * data =          0xcd repeated 50 times
+	 * data_len =      50
+	 * digest =        0x4c9007f4026250c6bc8414f9bf50c86c2d7235da
 	 */
 	keylen = 25;
 	memcpy(key, "\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19", keylen);
@@ -2154,12 +2319,14 @@ sctp_test_hmac_sha1(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     5 key =
-	 * 0x0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c key_len =       20
-	 * data =          "Test With Truncation" data_len =      20 digest
-	 * = 0x4c1a03424b55e07fe7f27be1d58bb9324a9a5a04 digest-96 =
-	 * 0x4c1a03424b55e07fe7f27be1
+	/*-
+	 * test_case =     5
+	 * key =           0x0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c
+	 * key_len =       20
+	 * data =          "Test With Truncation"
+	 * data_len =      20
+	 * digest =        0x4c1a03424b55e07fe7f27be1d58bb9324a9a5a04
+	 * digest-96 =     0x4c1a03424b55e07fe7f27be1
 	 */
 	keylen = 20;
 	memset(key, 0x0c, keylen);
@@ -2170,11 +2337,13 @@ sctp_test_hmac_sha1(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     6 key =           0xaa repeated 80 times key_len
-	 * = 80 data =          "Test Using Larger Than Block-Size Key -
-	 * Hash Key First" data_len =      54 digest =
-	 * 0xaa4ae5e15272d00e95705637ce8a3b55ed402112
+	/*-
+	 * test_case =     6
+	 * key =           0xaa repeated 80 times
+	 * key_len =       80
+	 * data =          "Test Using Larger Than Block-Size Key - Hash Key First"
+	 * data_len =      54
+	 * digest =        0xaa4ae5e15272d00e95705637ce8a3b55ed402112
 	 */
 	keylen = 80;
 	memset(key, 0xaa, keylen);
@@ -2185,11 +2354,13 @@ sctp_test_hmac_sha1(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     7 key =           0xaa repeated 80 times key_len
-	 * = 80 data =          "Test Using Larger Than Block-Size Key and
-	 * Larger Than One Block-Size Data" data_len =      73 digest =
-	 * 0xe8e99d0f45237d786d6bbaa7965c7808bbff1a91
+	/*-
+	 * test_case =     7
+	 * key =           0xaa repeated 80 times
+	 * key_len =       80
+	 * data =          "Test Using Larger Than Block-Size Key and Larger Than One Block-Size Data"
+	 * data_len =      73
+	 * digest =        0xe8e99d0f45237d786d6bbaa7965c7808bbff1a91
 	 */
 	keylen = 80;
 	memset(key, 0xaa, keylen);
@@ -2221,10 +2392,13 @@ sctp_test_hmac_md5(void)
 	uint32_t digestlen = 16;
 	int failed = 0;
 
-	/*
-	 * test_case =     1 key = 0x0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b
-	 * key_len =       16 data = "Hi There" data_len =      8 digest =
-	 * 0x9294727a3638bb1c13f48ef8158bfc9d
+	/*-
+	 * test_case =     1
+	 * key =           0x0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b
+	 * key_len =       16
+	 * data =          "Hi There"
+	 * data_len =      8
+	 * digest =        0x9294727a3638bb1c13f48ef8158bfc9d
 	 */
 	keylen = 16;
 	memset(key, 0x0b, keylen);
@@ -2235,10 +2409,13 @@ sctp_test_hmac_md5(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     2 key =           "Jefe" key_len =       4 data =
-	 * "what do ya want for nothing?" data_len =      28 digest =
-	 * 0x750c783e6ab0b503eaa86e310a5db738
+	/*-
+	 * test_case =     2
+	 * key =           "Jefe"
+	 * key_len =       4
+	 * data =          "what do ya want for nothing?"
+	 * data_len =      28
+	 * digest =        0x750c783e6ab0b503eaa86e310a5db738
 	 */
 	keylen = 4;
 	strcpy(key, "Jefe");
@@ -2249,10 +2426,13 @@ sctp_test_hmac_md5(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     3 key = 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-	 * key_len =       16 data = 0xdd repeated 50 times data_len =
-	 * 50 digest = 0x56be34521d144c88dbb8c733f0e8b3f6
+	/*-
+	 * test_case =     3
+	 * key =           0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+	 * key_len =       16
+	 * data =          0xdd repeated 50 times
+	 * data_len =	   50
+	 * digest =        0x56be34521d144c88dbb8c733f0e8b3f6
 	 */
 	keylen = 16;
 	memset(key, 0xaa, keylen);
@@ -2263,11 +2443,13 @@ sctp_test_hmac_md5(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     4 key =
-	 * 0x0102030405060708090a0b0c0d0e0f10111213141516171819 key_len = 25
-	 * data =          0xcd repeated 50 times data_len =      50 digest
-	 * =        0x697eaf0aca3a3aea3a75164746ffaa79
+	/*-
+	 * test_case =     4
+	 * key =           0x0102030405060708090a0b0c0d0e0f10111213141516171819
+	 * key_len =       25
+	 * data =          0xcd repeated 50 times
+	 * data_len =      50
+	 * digest =        0x697eaf0aca3a3aea3a75164746ffaa79
 	 */
 	keylen = 25;
 	memcpy(key, "\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19", keylen);
@@ -2278,11 +2460,14 @@ sctp_test_hmac_md5(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     5 key = 0x0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c
-	 * key_len =       16 data = "Test With Truncation" data_len =
-	 * 20 digest = 0x56461ef2342edc00f9bab995690efd4c digest-96
-	 * 0x56461ef2342edc00f9bab995
+	/*-
+	 * test_case =     5
+	 * key = 0x0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c
+	 * key_len =       16
+	 * data =          "Test With Truncation"
+	 * data_len =      20
+	 * digest =        0x56461ef2342edc00f9bab995690efd4c
+	 * digest-96 =     0x56461ef2342edc00f9bab995
 	 */
 	keylen = 16;
 	memset(key, 0x0c, keylen);
@@ -2293,11 +2478,13 @@ sctp_test_hmac_md5(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     6 key =           0xaa repeated 80 times key_len
-	 * = 80 data =          "Test Using Larger Than Block-Size Key -
-	 * Hash Key First" data_len =      54 digest =
-	 * 0x6b1ab7fe4bd7bf8f0b62e6ce61b9d0cd
+	/*-
+	 * test_case =     6
+	 * key =           0xaa repeated 80 times
+	 * key_len =       80
+	 * data =          "Test Using Larger Than Block-Size Key - Hash Key First"
+	 * data_len =      54
+	 * digest =        0x6b1ab7fe4bd7bf8f0b62e6ce61b9d0cd
 	 */
 	keylen = 80;
 	memset(key, 0xaa, keylen);
@@ -2308,11 +2495,13 @@ sctp_test_hmac_md5(void)
 	    text, textlen, digest, digestlen) < 0)
 		failed++;
 
-	/*
-	 * test_case =     7 key =           0xaa repeated 80 times key_len
-	 * = 80 data =          "Test Using Larger Than Block-Size Key and
-	 * Larger Than One Block-Size Data" data_len =      73 digest =
-	 * 0x6f630fad67cda0ee1fb1f562db3aa53e
+	/*-
+	 * test_case =     7
+	 * key =           0xaa repeated 80 times
+	 * key_len =       80
+	 * data =          "Test Using Larger Than Block-Size Key and Larger Than One Block-Size Data"
+	 * data_len =      73
+	 * digest =        0x6f630fad67cda0ee1fb1f562db3aa53e
 	 */
 	keylen = 80;
 	memset(key, 0xaa, keylen);
@@ -2432,6 +2621,6 @@ main(void)
 	sctp_test_authkey();
 }
 
-#endif				/* STANDALONE_HMAC_TEST */
+#endif /* STANDALONE_HMAC_TEST */
 
-#endif				/* SCTP_HMAC_TEST */
+#endif /* SCTP_HMAC_TEST */

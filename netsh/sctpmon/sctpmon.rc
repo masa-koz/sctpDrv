@@ -1,0 +1,49 @@
+#include <windows.h>
+
+#include <ntverp.h>
+
+#define	VER_FILETYPE			VFT_DLL
+#define	VER_FILESUBTYPE 		VFT2_UNKNOWN
+#undef VER_COMPANYNAME_STR
+#define VER_COMPANYNAME_STR		"CO-CONV, Corp."
+#define VER_FILEDESCRIPTION_STR		"CO-CONV, Corp. SCTP Driver"
+#define VER_INTERNALNAME_STR		VER_FILEDESCRIPTION_STR
+#define VER_FILEVERSION			0x0001, 0x0000, 0x0000, 0x0000
+#define VER_ORIGINALFILENAME_STR	"sctpmon.dll"
+#undef VER_PRODUCTNAME_STR
+#define VER_PRODUCTNAME_STR		"sctpDrv"
+#undef VER_PRODUCTVERSION_STR
+#define VER_PRODUCTVERSION_STR		"1.0.0.0"
+
+#include "common.ver"
+
+#pragma code_page(65001)
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+STRINGTABLE 
+BEGIN
+    1000 "Displays information.\n"
+    1001 "Displays the name and value of sysctl entry.\n"
+    1002 "\nUsage: %1!s!\n\nRemarks: Displays the the name and value of sysctl entry.\n"
+    1003 "Displays the name and explanation of sysctl entry.\n"
+    1004 "\nUsage: %1!s!\n\nRemarks: Displays the the name and explanation of sysctl entry.\n"
+    1005 "Displays information of SCTP association.\n"
+    1006 "\nUsage: %1!s!\n\nRemarks: Displays information of SCTP association.\n"
+    2000 "Sets configuration.\n"
+    2001 "Sets the value of sysctl entry.\n"
+    2002 "\nUsage: %1!s!\n\nRemarks: Sets the value of sysctl entry.\n"
+END
+
+LANGUAGE LANG_JAPANESE, SUBLANG_DEFAULT
+STRINGTABLE 
+BEGIN
+    1000 "情報を表示します。\n"
+    1001 "Sysctl のエントリの名前と値を表示します。\n"
+    1002 "\n使用法: %1!s!\n\n注釈: Sysctl のエントリの名前と値を表示します。\n"
+    1003 "Sysctl のエントリの名前と説明を表示します。\n"
+    1004 "\n使用法: %1!s!\n\n注釈: Sysctl のエントリの名前と説明を表示します。\n"
+    1005 "SCTP Association の情報を表示します。\n"
+    1006 "\n使用法: %1!s!\n\n注釈: SCTP Association の情報を表示します。\n"
+    2000 "構成情報を設定します。\n"
+    2001 "Sysctl のエントリに値を設定します。\n"
+    2002 "\n使用法: %1!s!\n\n注釈: Sysctl のエントリに値を設定します。\n"
+END

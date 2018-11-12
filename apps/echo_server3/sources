@@ -1,0 +1,16 @@
+#C_DEFINES=-DNT -DSCTP -DEVENT
+C_DEFINES=-DNT -DSCTP
+
+TARGETNAME=echo_server3
+TARGETTYPE=DRIVER
+
+INCLUDES= \
+    ..\.. ; \
+    ..\..\drv; \
+    $(DDK_INC_PATH)
+
+TARGETLIBS= \
+    $(DDK_LIB_PATH)\tdi.lib
+
+SOURCES= \
+    echo_server3.c

@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2001-2007, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2001-2007, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -31,13 +31,16 @@
 /* $KAME: sctp_timer.h,v 1.6 2005/03/06 16:04:18 itojun Exp $	 */
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_timer.h,v 1.2 2007/01/18 09:58:43 rrs Exp $");
+__FBSDID("$FreeBSD: head/sys/netinet/sctp_timer.h 184333 2008-10-27 13:53:31Z rrs $");
 #endif
 
 #ifndef __sctp_timer_h__
 #define __sctp_timer_h__
 
-#if defined(_KERNEL)
+#if defined(_KERNEL) || defined(__Userspace__)
+
+#define SCTP_RTT_SHIFT 3
+#define SCTP_RTT_VAR_SHIFT 2
 
 void
 sctp_early_fr_timer(struct sctp_inpcb *inp, struct sctp_tcb *stcb,
@@ -45,7 +48,7 @@ sctp_early_fr_timer(struct sctp_inpcb *inp, struct sctp_tcb *stcb,
 
 struct sctp_nets *
 sctp_find_alternate_net(struct sctp_tcb *,
-    struct sctp_nets *, int high_ssthresh);
+    struct sctp_nets *, int mode);
 
 int
 sctp_threshold_management(struct sctp_inpcb *, struct sctp_tcb *,
@@ -87,6 +90,10 @@ sctp_asconf_timer(struct sctp_inpcb *, struct sctp_tcb *,
     struct sctp_nets *);
 
 void
+sctp_delete_prim_timer(struct sctp_inpcb *, struct sctp_tcb *,
+    struct sctp_nets *);
+
+void
 sctp_autoclose_timer(struct sctp_inpcb *, struct sctp_tcb *,
     struct sctp_nets *net);
 
@@ -94,7 +101,7 @@ void sctp_audit_retranmission_queue(struct sctp_association *);
 
 void sctp_iterator_timer(struct sctp_iterator *it);
 
-#ifdef SCTP_APPLE_FINE_GRAINED_LOCKING
+#if defined(__APPLE__)
 void sctp_slowtimo();
 
 #endif

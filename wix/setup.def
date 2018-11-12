@@ -1,0 +1,7 @@
+LIBRARY		SETUP
+
+EXPORTS
+	SctpInstallDriver
+	SctpUnInstallDriver
+	SctpInstallProvider
+	SctpUnInstallProvider

@@ -1,0 +1,8 @@
+DIRS = \
+	echo_client \
+	echo_server \
+	echo_server2 \
+	echo_server3 \
+	file_sender \
+	file_receiver \
+	iperf

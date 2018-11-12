@@ -1,0 +1,56 @@
+--------------------------------------------------------------------------------
+Copyright (C) 2008 by CO-CONV, Corp., Kyoto, Japan.
+
+Developed by co-research between CO-CONV, Corp. and WIDE Project.
+--------------------------------------------------------------------------------
+
+Introduction:
+The source codes under the current directory are for
+sctpDrv (SCTP Driver for Windows).
+We distribute all under modified BSD license.
+
+Explanation:
+	apps/		Sample Apps. (Including iperf)
+	drv/		Driver's entry point etc.
+	kern/		Kernel interface for Winsock, etc
+	net/		Network interface, routring, etc
+	netinet/	SCTP (derived from FreeBSD SCTP code)
+	netinet6/	IPv6 specific 
+	sp/		Userland interface for Winsock
+	subr/		Subroutines
+	sys/		Kernel specific header files
+	tools/		Tools for SCTP
+	wix/		Installer
+
+Environment:
+Windows Operating System on which you can execute WDK
+
+How to get the latest code:
+Please access to the below repositry.
+	http://svn.sctp.jp/sctpDrv/
+
+How to build:
+Before you build sctpDrv, you have to download WDK (Windows Driver Kit)
+via Microsoft Connect (http://connect.microsoft.com/) and install it.
+If you want to build the installer package too,
+the WiX (Windows Installer XML) toolset is needed.
+Please get the WiX 2.0 from http://wix.sourceforge.net/, extreact it, and
+insert the paths for WiX tools into PATH environment variable.
+
+To build the installer package, you will launch the build environments of WDK
+for Windows XP and Windows Vista.
+	"Launch Windows XP x86 Free Build Environment"
+	"Launch Windows Vista and Windows Server 2008 x86 Free Build Environment"
+At first, enter the following command into Windows XP build environment.
+("C:\work\sctpDrv" is the path of sctpDrv's top directory on my machine.)
+	C:\work\sctpDrv>build
+After that, enter the following command into Windows Vista build environment.
+	C:\work\sctpDrv>build
+
+Finally, move to wix/ directory on Windows Vista build environment and
+execute the following command in order to create the installer package.
+	C:\work\sctpDrv\wix>nmake -f Makefile.wix
+--------------------------------------------------------------------------------
+
+
+Happy SCTPing!

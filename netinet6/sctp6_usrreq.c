@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2001-2007, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2001-2007, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -28,9 +28,10 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 /*	$KAME: sctp6_usrreq.c,v 1.38 2005/08/24 08:08:56 suz Exp $	*/
+
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet6/sctp6_usrreq.c,v 1.10 2007/02/12 23:24:31 rrs Exp $");
+__FBSDID("$FreeBSD: head/sys/netinet6/sctp6_usrreq.c 185694 2008-12-06 13:19:54Z rrs $");
 #endif
 
 #include <netinet/sctp_os.h>
@@ -40,31 +41,37 @@ __FBSDID("$FreeBSD: src/sys/netinet6/sctp6_usrreq.c,v 1.10 2007/02/12 23:24:31 r
 #include <netinet/sctp_pcb.h>
 #include <netinet/sctp_header.h>
 #include <netinet/sctp_var.h>
+#if defined(INET6)
+#include <netinet6/sctp6_var.h>
+#endif
+#include <netinet/sctp_sysctl.h>
 #include <netinet/sctp_output.h>
-#include <netinet/sctp_input.h>
-#include <netinet/sctp_bsd_addr.h>
 #include <netinet/sctp_uio.h>
 #include <netinet/sctp_asconf.h>
 #include <netinet/sctputil.h>
 #include <netinet/sctp_indata.h>
-#include <netinet/sctp_asconf.h>
 #include <netinet/sctp_timer.h>
 #include <netinet/sctp_auth.h>
-#include <netinet6/sctp6_var.h>
-
+#include <netinet/sctp_input.h>
+#include <netinet/sctp_output.h>
+#include <netinet/sctp_bsd_addr.h>
+#include <netinet/udp.h>
 
 #if defined(__APPLE__)
 #define APPLE_FILE_NO 9
 #endif
-
-#ifdef SCTP_DEBUG
-extern uint32_t sctp_debug_on;
-#endif /* SCTP_DEBUG */
+#ifdef IPSEC
+#include <netipsec/ipsec.h>
+#if defined(INET6)
+#include <netipsec/ipsec6.h>
+#endif /* INET6 */
+#endif /* IPSEC */
 
 extern struct protosw inetsw[];
-
-
-#if !(defined(__FreeBSD__) || defined(__APPLE__))
+#ifdef __Panda__
+int ip6_v6only=0;
+#endif
+#if !(defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__))
 extern void 
 in6_sin_2_v4mapsin6(struct sockaddr_in *sin,
     struct sockaddr_in6 *sin6);
@@ -116,20 +123,13 @@ in6_sin6_2_sin_in_sock(struct sockaddr *nam)
 
 #endif				/* !(__FreeBSD__ || __APPLE__) */
 
-extern int sctp_no_csum_on_loopback;
-
 int
 #if defined(__APPLE__)
-sctp6_input(mp, offp)
+sctp6_input_with_port(struct mbuf **i_pak, int *offp, uint16_t port)
+#elif defined( __Panda__)
+sctp6_input(pakhandle_type *i_pak)
 #else
-sctp6_input(mp, offp, proto)
-#endif
-	struct mbuf **mp;
-	int *offp;
-
-#ifndef __APPLE__
-	int proto;
-
+sctp6_input(struct mbuf **i_pak, int *offp, int proto)
 #endif
 {
 	struct mbuf *m;
@@ -138,37 +138,61 @@ sctp6_input(mp, offp, proto)
 	struct sctp_inpcb *in6p = NULL;
 	struct sctp_nets *net;
 	int refcount_up = 0;
-	u_int32_t check, calc_check;
+	uint32_t check, calc_check;
+	uint32_t vrf_id = 0;
 	struct inpcb *in6p_ip;
 	struct sctp_chunkhdr *ch;
-	int length, mlen, offset, iphlen;
-	u_int8_t ecn_bits;
+	int length, offset, iphlen;
+	uint8_t ecn_bits;
 	struct sctp_tcb *stcb = NULL;
+	int pkt_len = 0;
+#ifndef __Panda__
 	int off = *offp;
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	int s;
+#else
+	int off;
+#endif
+#if !defined(__APPLE__)
+	uint16_t port = 0;
+#endif
+#ifdef __Panda__
+	/*-
+	 * This is Evil, but its the only way to make
+	 * panda work right 
+	 */
+	off = sizeof(struct ip6_hdr);
+#endif
+	/* get the VRF and table id's */
+ 	if (SCTP_GET_PKT_VRFID(*i_pak, vrf_id)) {
+		SCTP_RELEASE_PKT(*i_pak);
+		return (-1);
+	}
+
+	m = SCTP_HEADER_TO_CHAIN(*i_pak);
+	pkt_len = SCTP_HEADER_LEN((*i_pak));
+#ifdef __Panda__
+	/* We dont need the pak hdr, free it */
+	/* For BSD/MAC this does nothing */
+	SCTP_DETACH_HEADER_FROM_CHAIN(*i_pak);
+	(void)SCTP_RELEASE_HEADER(*i_pak);
 #endif
 
-	m = SCTP_HEADER_TO_CHAIN(*mp);
-
+#ifdef  SCTP_PACKET_LOGGING
+	sctp_packet_log(m, pkt_len);
+#endif
 	ip6 = mtod(m, struct ip6_hdr *);
-#ifndef PULLDOWN_TEST
-	/* If PULLDOWN_TEST off, must be in a single mbuf. */
-	IP6_EXTHDR_CHECK(m, off, (int)(sizeof(*sh) + sizeof(*ch)), IPPROTO_DONE);
-	sh = (struct sctphdr *)((caddr_t)ip6 + off);
-	ch = (struct sctp_chunkhdr *)((caddr_t)sh + sizeof(*sh));
-#else
 	/* Ensure that (sctphdr + sctp_chunkhdr) in a row. */
-	IP6_EXTHDR_GET(sh, struct sctphdr *, m, off, sizeof(*sh) + sizeof(*ch));
+	IP6_EXTHDR_GET(sh, struct sctphdr *, m, off,
+		       (int)(sizeof(*sh) + sizeof(*ch)));
 	if (sh == NULL) {
 		SCTP_STAT_INCR(sctps_hdrops);
 		return IPPROTO_DONE;
 	}
 	ch = (struct sctp_chunkhdr *)((caddr_t)sh + sizeof(struct sctphdr));
-#endif
-
 	iphlen = off;
 	offset = iphlen + sizeof(*sh) + sizeof(*ch);
+	SCTPDBG(SCTP_DEBUG_INPUT1,
+		"sctp6_input() length:%d iphlen:%d\n", pkt_len, iphlen);
+
 
 #if defined(NFAITH) && NFAITH > 0
 #if defined(__FreeBSD_cc_version) && __FreeBSD_cc_version <= 430000
@@ -194,11 +218,8 @@ sctp6_input(mp, offp, proto)
 #endif				/* NFAITH defined and > 0 */
 	SCTP_STAT_INCR(sctps_recvpackets);
 	SCTP_STAT_INCR_COUNTER64(sctps_inpackets);
-#ifdef SCTP_DEBUG
-	if (sctp_debug_on & SCTP_DEBUG_INPUT1) {
-		printf("V6 input gets a packet iphlen:%d pktlen:%d\n", iphlen, SCTP_HEADER_LEN((*mp)));
-	}
-#endif
+	SCTPDBG(SCTP_DEBUG_INPUT1, "V6 input gets a packet iphlen:%d pktlen:%d\n",
+		iphlen, pkt_len);
 	if (IN6_IS_ADDR_MULTICAST(&ip6->ip6_dst)) {
 		/* No multi-cast support in SCTP */
 		goto bad;
@@ -206,61 +227,51 @@ sctp6_input(mp, offp, proto)
 	/* destination port of 0 is illegal, based on RFC2960. */
 	if (sh->dest_port == 0)
 		goto bad;
-	if ((sctp_no_csum_on_loopback == 0) ||
-	    (!SCTP_IS_IT_LOOPBACK(m))) {
-		/*
-		 * we do NOT validate things from the loopback if the sysctl
-		 * is set to 1.
-		 */
-		check = sh->checksum;	/* save incoming checksum */
-		if ((check == 0) && (sctp_no_csum_on_loopback)) {
-			/*
-			 * special hook for where we got a local address
-			 * somehow routed across a non IFT_LOOP type
-			 * interface
-			 */
-			if (IN6_ARE_ADDR_EQUAL(&ip6->ip6_src, &ip6->ip6_dst))
-				goto sctp_skip_csum;
-		}
-		sh->checksum = 0;	/* prepare for calc */
-		calc_check = sctp_calculate_sum(m, &mlen, iphlen);
-		if (calc_check != check) {
-#ifdef SCTP_DEBUG
-			if (sctp_debug_on & SCTP_DEBUG_INPUT1) {
-				printf("Bad CSUM on SCTP packet calc_check:%x check:%x  m:%p mlen:%d iphlen:%d\n",
-				    calc_check, check, m,
-				    mlen, iphlen);
+	check = sh->checksum;	/* save incoming checksum */
+	if ((check == 0) && (SCTP_BASE_SYSCTL(sctp_no_csum_on_loopback)) &&
+	    (IN6_ARE_ADDR_EQUAL(&ip6->ip6_src, &ip6->ip6_dst))) {
+		goto sctp_skip_csum;
+	}
+	sh->checksum = 0;	/* prepare for calc */
+	calc_check = sctp_calculate_sum(m, NULL, iphlen);
+	if (calc_check != check) {
+		SCTPDBG(SCTP_DEBUG_INPUT1, "Bad CSUM on SCTP packet calc_check:%x check:%x  m:%p phlen:%d\n",
+			calc_check, check, m, iphlen);
+		stcb = sctp_findassociation_addr(m, iphlen, offset - sizeof(*ch),
+						 sh, ch, &in6p, &net, vrf_id);
+		if ((net) && (port)) {
+			if (net->port == 0) {
+				sctp_pathmtu_adjustment(in6p, stcb, net, net->mtu - sizeof(struct udphdr));
 			}
-#endif
-			stcb = sctp_findassociation_addr(m, iphlen, offset - sizeof(*ch),
-			    sh, ch, &in6p, &net);
-			/* in6p's ref-count increased && stcb locked */
-			if ((in6p) && (stcb)) {
-				sctp_send_packet_dropped(stcb, net, m, iphlen, 1);
-				sctp_chunk_output((struct sctp_inpcb *)in6p, stcb, 2);
-#if defined(SCTP_PER_SOCKET_LOCKING)
-				SCTP_SOCKET_UNLOCK(SCTP_INP_SO(in6p), 1);
-#endif
-			} else if ((in6p != NULL) && (stcb == NULL)) {
-#if defined(SCTP_PER_SOCKET_LOCKING)
-				SCTP_SOCKET_UNLOCK(SCTP_INP_SO(in6p), 1);
-#endif
-				refcount_up = 1;
-			}
-			SCTP_STAT_INCR(sctps_badsum);
-			SCTP_STAT_INCR_COUNTER32(sctps_checksumerrors);
-			goto bad;
+			net->port = port;
 		}
-		sh->checksum = calc_check;
-	} 
-sctp_skip_csum:
+		/* in6p's ref-count increased && stcb locked */
+		if ((in6p) && (stcb)) {
+			sctp_send_packet_dropped(stcb, net, m, iphlen, 1);
+			sctp_chunk_output((struct sctp_inpcb *)in6p, stcb, SCTP_OUTPUT_FROM_INPUT_ERROR, SCTP_SO_NOT_LOCKED);
+		} else if ((in6p != NULL) && (stcb == NULL)) {
+			refcount_up = 1;
+		}
+		SCTP_STAT_INCR(sctps_badsum);
+		SCTP_STAT_INCR_COUNTER32(sctps_checksumerrors);
+		goto bad;
+	}
+	sh->checksum = calc_check;
+
+ sctp_skip_csum:
 	net = NULL;
 	/*
 	 * Locate pcb and tcb for datagram sctp_findassociation_addr() wants
 	 * IP/SCTP/first chunk header...
 	 */
 	stcb = sctp_findassociation_addr(m, iphlen, offset - sizeof(*ch),
-	    sh, ch, &in6p, &net);
+					 sh, ch, &in6p, &net, vrf_id);
+	if ((net) && (port)) {
+		if (net->port == 0) {
+			sctp_pathmtu_adjustment(in6p, stcb, net, net->mtu - sizeof(struct udphdr));
+		}
+		net->port = port;
+	}
 	/* in6p's ref-count increased */
 	if (in6p == NULL) {
 		struct sctp_init_chunk *init_chk, chunk_buf;
@@ -273,12 +284,15 @@ sctp_skip_csum:
 			 * common header.
 			 */
 			init_chk = (struct sctp_init_chunk *)sctp_m_getptr(m,
-			    iphlen + sizeof(*sh), sizeof(*init_chk),
-			    (u_int8_t *) & chunk_buf);
-			sh->v_tag = init_chk->init.initiate_tag;
+									   iphlen + sizeof(*sh), sizeof(*init_chk),
+									   (uint8_t *) & chunk_buf);
+			if(init_chk)
+				sh->v_tag = init_chk->init.initiate_tag;
+			else 
+				sh->v_tag = 0;
 		}
 		if (ch->chunk_type == SCTP_SHUTDOWN_ACK) {
-			sctp_send_shutdown_complete2(m, iphlen, sh);
+			sctp_send_shutdown_complete2(m, iphlen, sh, vrf_id, port);
  			goto bad;
 		}
 		if (ch->chunk_type == SCTP_SHUTDOWN_COMPLETE) {
@@ -286,7 +300,7 @@ sctp_skip_csum:
 		}
 
 		if (ch->chunk_type != SCTP_ABORT_ASSOCIATION)
-			sctp_send_abort(m, iphlen, sh, 0, NULL);
+			sctp_send_abort(m, iphlen, sh, 0, NULL, vrf_id, port);
 		goto bad;
 	} else if (stcb == NULL) {
 		refcount_up = 1;
@@ -296,88 +310,17 @@ sctp_skip_csum:
 	/*
 	 * Check AH/ESP integrity.
 	 */
-#ifdef __OpenBSD__
-	{
-		struct inpcb *i_inp;
-		struct m_tag *mtag;
-		struct tdb_ident *tdbi;
-		struct tdb *tdb;
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-		int s;
-#endif
-		int error;
-
-		/* Find most recent IPsec tag */
-		i_inp = (struct inpcb *)in6p;
-		mtag = m_tag_find(m, PACKET_TAG_IPSEC_IN_DONE, NULL);
-		s = splsoftnet();
-		if (mtag != NULL) {
-			tdbi = (struct tdb_ident *)(mtag + 1);
-			tdb = gettdb(tdbi->spi, &tdbi->dst, tdbi->proto);
-		} else
-			tdb = NULL;
-
-		ipsp_spd_lookup(m, af, iphlen, &error, IPSP_DIRECTION_IN,
-		    tdb, i_inp);
-		if (error) {
-			splx(s);
-			goto bad;
-		}
-		/* Latch SA */
-		if (i_inp->inp_tdb_in != tdb) {
-			if (tdb) {
-				tdb_add_inp(tdb, i_inp, 1);
-				if (i_inp->inp_ipo == NULL) {
-					i_inp->inp_ipo = ipsec_add_policy(i_inp,
-					    af, IPSP_DIRECTION_OUT);
-					if (i_inp->inp_ipo == NULL) {
-						splx(s);
-						goto bad;
-					}
-				}
-				if (i_inp->inp_ipo->ipo_dstid == NULL &&
-				    tdb->tdb_srcid != NULL) {
-					i_inp->inp_ipo->ipo_dstid =
-					    tdb->tdb_srcid;
-					tdb->tdb_srcid->ref_count++;
-				}
-				if (i_inp->inp_ipsec_remotecred == NULL &&
-				    tdb->tdb_remote_cred != NULL) {
-					i_inp->inp_ipsec_remotecred =
-					    tdb->tdb_remote_cred;
-					tdb->tdb_remote_cred->ref_count++;
-				}
-				if (i_inp->inp_ipsec_remoteauth == NULL &&
-				    tdb->tdb_remote_auth != NULL) {
-					i_inp->inp_ipsec_remoteauth =
-					    tdb->tdb_remote_auth;
-					tdb->tdb_remote_auth->ref_count++;
-				}
-			} else {/* Just reset */
-				TAILQ_REMOVE(&i_inp->inp_tdb_in->tdb_inp_in,
-				    i_inp, binp_tdb_in_next);
-				i_inp->inp_tdb_in = NULL;
-			}
-		}
-		splx(s);
-	}
-#else
 	if (in6p_ip && (ipsec6_in_reject(m, in6p_ip))) {
 /* XXX */
 #ifdef __APPLE__
 		/* FIX ME: need to find right stat for __APPLE__ */
 #endif
 #ifndef __APPLE__
-		ipsec6stat.in_polvio++;
+		MODULE_GLOBAL(MOD_IPSEC, ipsec6stat).in_polvio++;
 #endif
 		goto bad;
 	}
-#endif
-#endif				/* IPSEC */
-
-#if defined(SCTP_PER_SOCKET_LOCKING)
-	sctp_lock_assert(SCTP_INP_SO(in6p));
-#endif
+#endif /* IPSEC */
 
 	/*
 	 * CONTROL chunk processing
@@ -388,33 +331,25 @@ sctp_skip_csum:
 	/* Length now holds the total packet length payload + iphlen */
 	length = ntohs(ip6->ip6_plen) + iphlen;
 
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	s = splsoftnet();
-#endif
-	(void)sctp_common_input_processing(&m, iphlen, offset, length, sh, ch,
-	    in6p, stcb, net, ecn_bits);
+	/*sa_ignore NO_NULL_CHK*/
+	sctp_common_input_processing(&m, iphlen, offset, length, sh, ch,
+				     in6p, stcb, net, ecn_bits, vrf_id, port);
 	/* inp's ref-count reduced && stcb unlocked */
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	splx(s);
-#endif
 	/* XXX this stuff below gets moved to appropriate parts later... */
 	if (m)
-		m_freem(m);
+		sctp_m_freem(m);
 	if ((in6p) && refcount_up) {
 		/* reduce ref-count */
 		SCTP_INP_WLOCK(in6p);
 		SCTP_INP_DECR_REF(in6p);
 		SCTP_INP_WUNLOCK(in6p);
 	}
-#if defined(SCTP_PER_SOCKET_LOCKING)
-	SCTP_SOCKET_UNLOCK(SCTP_INP_SO(in6p), 1);
-#endif
-
 	return IPPROTO_DONE;
 
-bad:
-	if (stcb)
+ bad:
+	if (stcb) {
 		SCTP_TCB_UNLOCK(stcb);
+	}
 
 	if ((in6p) && refcount_up) {
 		/* reduce ref-count */
@@ -423,19 +358,27 @@ bad:
 		SCTP_INP_WUNLOCK(in6p);
 	}
 	if (m)
-		m_freem(m);
+		sctp_m_freem(m);
 	return IPPROTO_DONE;
 }
 
-
-static void
-sctp6_notify_mbuf(struct sctp_inpcb *inp,
-    struct icmp6_hdr *icmp6,
-    struct sctphdr *sh,
-    struct sctp_tcb *stcb,
-    struct sctp_nets *net)
+#if defined(__APPLE__)
+int
+sctp6_input(struct mbuf **i_pak, int *offp)
 {
-	u_int32_t nxtsz;
+	return (sctp6_input_with_port(i_pak, offp, 0));
+}
+#endif
+
+#if defined(__Panda__)
+void
+#else
+static void
+#endif
+sctp6_notify_mbuf(struct sctp_inpcb *inp, struct icmp6_hdr *icmp6, 
+		  struct sctphdr *sh, struct sctp_tcb *stcb, struct sctp_nets *net)
+{
+	uint32_t nxtsz;
 
 	if ((inp == NULL) || (stcb == NULL) || (net == NULL) ||
 	    (icmp6 == NULL) || (sh == NULL)) {
@@ -462,6 +405,9 @@ sctp6_notify_mbuf(struct sctp_inpcb *inp,
 	/* Adjust destination size limit */
 	if (net->mtu > nxtsz) {
 		net->mtu = nxtsz;
+		if (net->port) {
+			net->mtu -= sizeof(struct udphdr);
+		}
 	}
 	/* now what about the ep? */
 	if (stcb->asoc.smallest_mtu > nxtsz) {
@@ -472,12 +418,12 @@ sctp6_notify_mbuf(struct sctp_inpcb *inp,
 		/* now off to subtract IP_DF flag if needed */
 
 		TAILQ_FOREACH(chk, &stcb->asoc.send_queue, sctp_next) {
-			if ((u_int32_t) (chk->send_size + IP_HDR_SIZE) > nxtsz) {
+			if ((uint32_t) (chk->send_size + IP_HDR_SIZE) > nxtsz) {
 				chk->flags |= CHUNK_FLAGS_FRAGMENT_OK;
 			}
 		}
 		TAILQ_FOREACH(chk, &stcb->asoc.sent_queue, sctp_next) {
-			if ((u_int32_t) (chk->send_size + IP_HDR_SIZE) > nxtsz) {
+			if ((uint32_t) (chk->send_size + IP_HDR_SIZE) > nxtsz) {
 				/*
 				 * For this guy we also mark for immediate
 				 * resend since we sent to big of chunk
@@ -499,26 +445,143 @@ sctp6_notify_mbuf(struct sctp_inpcb *inp,
 	}
 	sctp_timer_start(SCTP_TIMER_TYPE_PATHMTURAISE, inp, stcb, NULL);
 out:
-	if (stcb)
+	if (stcb) {
 		SCTP_TCB_UNLOCK(stcb);
+	}
 }
 
 
 void
-sctp6_ctlinput(cmd, pktdst, d)
-	int cmd;
-	struct sockaddr *pktdst;
-	void *d;
+sctp6_notify(struct sctp_inpcb *inp,
+    struct icmp6_hdr *icmph,
+    struct sctphdr *sh,
+    struct sockaddr *to,
+    struct sctp_tcb *stcb,
+    struct sctp_nets *net)
+{
+#if defined (__APPLE__) || defined(SCTP_SO_LOCK_TESTING)
+	struct socket *so;
+
+#endif
+	/* protection */
+	int reason;
+
+
+	if ((inp == NULL) || (stcb == NULL) || (net == NULL) ||
+	    (sh == NULL) || (to == NULL)) {
+		if(stcb)
+			SCTP_TCB_UNLOCK(stcb);
+		return;
+	}
+	/* First job is to verify the vtag matches what I would send */
+	if (ntohl(sh->v_tag) != (stcb->asoc.peer_vtag)) {
+		SCTP_TCB_UNLOCK(stcb);
+		return;
+	}
+	if (icmph->icmp6_type != ICMP_UNREACH) {
+		/* We only care about unreachable */
+		SCTP_TCB_UNLOCK(stcb);
+		return;
+	}
+	if ((icmph->icmp6_code == ICMP_UNREACH_NET) ||
+	    (icmph->icmp6_code == ICMP_UNREACH_HOST) ||
+	    (icmph->icmp6_code == ICMP_UNREACH_NET_UNKNOWN) ||
+	    (icmph->icmp6_code == ICMP_UNREACH_HOST_UNKNOWN) ||
+	    (icmph->icmp6_code == ICMP_UNREACH_ISOLATED) ||
+	    (icmph->icmp6_code == ICMP_UNREACH_NET_PROHIB) ||
+	    (icmph->icmp6_code == ICMP_UNREACH_HOST_PROHIB) ||
+#ifdef __Panda__
+            (icmph->icmp6_code == ICMP_UNREACH_ADMIN)) {
+#else
+            (icmph->icmp6_code == ICMP_UNREACH_FILTER_PROHIB)) {
+#endif
+
+		/*
+		 * Hmm reachablity problems we must examine closely. If its
+		 * not reachable, we may have lost a network. Or if there is
+		 * NO protocol at the other end named SCTP. well we consider
+		 * it a OOTB abort.
+		 */
+		if (net->dest_state & SCTP_ADDR_REACHABLE) {
+			/* Ok that destination is NOT reachable */
+			SCTP_PRINTF("ICMP (thresh %d/%d) takes interface %p down\n",
+				    net->error_count,
+				    net->failure_threshold,
+				    net);
+			
+			net->dest_state &= ~SCTP_ADDR_REACHABLE;
+			net->dest_state |= SCTP_ADDR_NOT_REACHABLE;
+			/*
+			 * JRS 5/14/07 - If a destination is unreachable, the PF bit
+			 *  is turned off.  This allows an unambiguous use of the PF bit
+			 *  for destinations that are reachable but potentially failed.
+			 *  If the destination is set to the unreachable state, also set
+			 *  the destination to the PF state.
+			 */
+			/* Add debug message here if destination is not in PF state. */
+			/* Stop any running T3 timers here? */
+			if (SCTP_BASE_SYSCTL(sctp_cmt_on_off) && SCTP_BASE_SYSCTL(sctp_cmt_pf)) {
+				net->dest_state &= ~SCTP_ADDR_PF;
+				SCTPDBG(SCTP_DEBUG_TIMER4, "Destination %p moved from PF to unreachable.\n",
+					net);
+			}
+			net->error_count = net->failure_threshold + 1;
+			sctp_ulp_notify(SCTP_NOTIFY_INTERFACE_DOWN,
+					stcb, SCTP_FAILED_THRESHOLD,
+					(void *)net, SCTP_SO_NOT_LOCKED);
+		}
+		SCTP_TCB_UNLOCK(stcb);
+	} else  if ((icmph->icmp6_code == ICMP_UNREACH_PROTOCOL) ||
+		    (icmph->icmp6_code == ICMP_UNREACH_PORT)) {
+		/*
+		 * Here the peer is either playing tricks on us,
+		 * including an address that belongs to someone who
+		 * does not support SCTP OR was a userland
+		 * implementation that shutdown and now is dead. In
+		 * either case treat it like a OOTB abort with no
+		 * TCB
+		 */
+		reason = SCTP_PEER_FAULTY;
+		sctp_abort_notification(stcb, reason, SCTP_SO_NOT_LOCKED);
+#if defined (__APPLE__) || defined(SCTP_SO_LOCK_TESTING)
+		so = SCTP_INP_SO(inp);
+		atomic_add_int(&stcb->asoc.refcnt, 1);
+		SCTP_TCB_UNLOCK(stcb);
+		SCTP_SOCKET_LOCK(so, 1);
+		SCTP_TCB_LOCK(stcb);
+		atomic_subtract_int(&stcb->asoc.refcnt, 1);
+#endif
+		(void)sctp_free_assoc(inp, stcb, SCTP_NORMAL_PROC, SCTP_FROM_SCTP_USRREQ+SCTP_LOC_2);
+#if defined (__APPLE__) || defined(SCTP_SO_LOCK_TESTING)
+		SCTP_SOCKET_UNLOCK(so, 1);
+		/* SCTP_TCB_UNLOCK(stcb); MT: I think this is not needed.*/
+#endif
+		/* no need to unlock here, since the TCB is gone */
+	} else {
+		SCTP_TCB_UNLOCK(stcb);
+	}
+}
+
+
+
+#if !defined(__Panda__)
+void
+sctp6_ctlinput(int cmd, struct sockaddr *pktdst, void *d)
 {
 	struct sctphdr sh;
 	struct ip6ctlparam *ip6cp = NULL;
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	int s;
-#endif
-	int cm;
+	uint32_t vrf_id;
 
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
+	vrf_id = SCTP_DEFAULT_VRFID;
+#endif
+
+#if !defined(__Windows__)
 	if (pktdst->sa_family != AF_INET6 ||
 	    pktdst->sa_len != sizeof(struct sockaddr_in6))
+#else
+	if (pktdst->sa_family != AF_INET6)
+#endif
 		return;
 
 	if ((unsigned)cmd >= PRC_NCMDS)
@@ -556,7 +619,9 @@ sctp6_ctlinput(cmd, pktdst, d)
 		m_copydata(ip6cp->ip6c_m, ip6cp->ip6c_off, sizeof(sh),
 		    (caddr_t)&sh);
 		ip6cp->ip6c_src->sin6_port = sh.src_port;
+#if !defined(__Windows__)
 		final.sin6_len = sizeof(final);
+#endif
 		final.sin6_family = AF_INET6;
 #if defined(__FreeBSD__) && __FreeBSD_cc_version < 440000
 		final.sin6_addr = *ip6cp->ip6c_finaldst;
@@ -564,12 +629,9 @@ sctp6_ctlinput(cmd, pktdst, d)
 		final.sin6_addr = ((struct sockaddr_in6 *)pktdst)->sin6_addr;
 #endif				/* __FreeBSD_cc_version */
 		final.sin6_port = sh.dest_port;
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-		s = splsoftnet();
-#endif
 		stcb = sctp_findassociation_addr_sa((struct sockaddr *)ip6cp->ip6c_src,
 		    (struct sockaddr *)&final,
-		    &inp, &net, 1);
+		    &inp, &net, 1, vrf_id);
 		/* inp's ref-count increased && stcb locked */
 		if (stcb != NULL && inp && (inp->sctp_socket != NULL)) {
 			if (cmd == PRC_MSGSIZE) {
@@ -580,26 +642,18 @@ sctp6_ctlinput(cmd, pktdst, d)
 				    net);
 				/* inp's ref-count reduced && stcb unlocked */
 			} else {
-				if (cmd == PRC_HOSTDEAD) {
-					cm = EHOSTUNREACH;
-				} else {
-					cm = inet6ctlerrmap[cmd];
-				}
-				sctp_notify(inp, cm, &sh,
+				sctp6_notify(inp, ip6cp->ip6c_icmp6, &sh,
 				    (struct sockaddr *)&final,
 				    stcb, net);
 				/* inp's ref-count reduced && stcb unlocked */
 			}
 		} else {
+#if !defined(__Windows__)
 			if (PRC_IS_REDIRECT(cmd) && inp) {
-#ifdef __OpenBSD__
-				in_rtchange((struct inpcb *)inp,
-				    inetctlerrmap[cmd]);
-#else
 				in6_rtchange((struct in6pcb *)inp,
 				    inet6ctlerrmap[cmd]);
-#endif
 			}
+#endif
 			if (inp) {
 				/* reduce inp's ref-count */
 				SCTP_INP_WLOCK(inp);
@@ -609,16 +663,9 @@ sctp6_ctlinput(cmd, pktdst, d)
 			if (stcb)
 				SCTP_TCB_UNLOCK(stcb);
 		}
-#if defined(SCTP_PER_SOCKET_LOCKING)
-		if (inp != NULL) {
-			SCTP_SOCKET_UNLOCK(SCTP_INP_SO(inp), 1);
-		}
-#endif
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-		splx(s);
-#endif
 	}
 }
+#endif
 
 /*
  * this routine can probably be collasped into the one in sctp_userreq.c
@@ -634,15 +681,16 @@ sctp6_getcred(SYSCTL_HANDLER_ARGS)
 	struct sctp_nets *net;
 	struct sctp_tcb *stcb;
 	int error;
+	uint32_t vrf_id;
+
+#if defined(__FreeBSD__) || defined(__APPLE__)
+	vrf_id = SCTP_DEFAULT_VRFID;
+#else
+	vrf_id = panda_get_vrf_from_call(); /* from connectx call? */
+#endif
 
 #if defined(__FreeBSD__) && __FreeBSD_version > 602000
-	/*
-	 * XXXRW: Other instances of getcred use SUSER_ALLOWJAIL, as socket
-	 * visibility is scoped using cr_canseesocket(), which it is not
-	 * here.
-	 */
-	error = priv_check_cred(req->td->td_ucred, PRIV_NETINET_RESERVEDPORT,
-	    0);
+	error = priv_check(req->td, PRIV_NETINET_GETCRED);
 #elif defined(__FreeBSD__) && __FreeBSD_version >= 500000
 	error = suser(req->td);
 #else
@@ -651,17 +699,21 @@ sctp6_getcred(SYSCTL_HANDLER_ARGS)
 	if (error)
 		return (error);
 
-	if (req->newlen != sizeof(addrs))
+	if (req->newlen != sizeof(addrs)) {
+		SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 		return (EINVAL);
-	if (req->oldlen != sizeof(struct ucred))
+	}
+	if (req->oldlen != sizeof(struct ucred)) {
+		SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 		return (EINVAL);
+	}
 	error = SYSCTL_IN(req, addrs, sizeof(addrs));
 	if (error)
 		return (error);
 
 	stcb = sctp_findassociation_addr_sa(sin6tosa(&addrs[0]),
 	    sin6tosa(&addrs[1]),
-	    &inp, &net, 1);
+	    &inp, &net, 1, vrf_id);
 	if (stcb == NULL || inp == NULL || inp->sctp_socket == NULL) {
 		if ((inp != NULL) && (stcb == NULL)) {
 			/* reduce ref-count */
@@ -669,6 +721,7 @@ sctp6_getcred(SYSCTL_HANDLER_ARGS)
 			SCTP_INP_DECR_REF(inp);
 			goto cred_can_cont;
 		}
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, ENOENT);
 		error = ENOENT;
 		goto out;
 	}
@@ -680,7 +733,7 @@ sctp6_getcred(SYSCTL_HANDLER_ARGS)
 	 * in theory could create a hole. Better
 	 * to use higher wlock.
 	 */
-	SCTP_INP_WLOCK(inp);	
+	SCTP_INP_WLOCK(inp);
  cred_can_cont:
 	error = cr_canseesocket(req->td->td_ucred, inp->sctp_socket);
 	if (error) {
@@ -701,7 +754,7 @@ SYSCTL_PROC(_net_inet6_sctp6, OID_AUTO, getcred, CTLTYPE_OPAQUE | CTLFLAG_RW,
 #endif
 
 /* This is the same as the sctp_abort() could be made common */
-#if defined(__FreeBSD__) && __FreeBSD_version > 690000
+#if (defined(__FreeBSD__) && __FreeBSD_version > 690000) || defined(__Windows__)
 static void
 #elif defined(__Panda__)
 int
@@ -711,21 +764,17 @@ static int
 sctp6_abort(struct socket *so)
 {
 	struct sctp_inpcb *inp;
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	int s;
-#endif
 	uint32_t flags;
 
 	inp = (struct sctp_inpcb *)so->so_pcb;
-	if (inp == 0)
-#if defined(__FreeBSD__) && __FreeBSD_version > 690000
+	if (inp == 0) {
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
+#if (defined(__FreeBSD__) && __FreeBSD_version > 690000) || defined(__Windows__)
 		return;
 #else
 		return EINVAL;
 #endif
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	s = splsoftnet();
-#endif
+	}
  sctp_must_try_again:
 	flags = inp->sctp_flags;
 #ifdef SCTP_LOG_CLOSING
@@ -736,22 +785,18 @@ sctp6_abort(struct socket *so)
 #ifdef SCTP_LOG_CLOSING
 		sctp_log_closing(inp, NULL, 16);
 #endif
-		sctp_inpcb_free(inp, 1, 0);
+		sctp_inpcb_free(inp, SCTP_FREE_SHOULD_USE_ABORT, 
+				SCTP_CALLED_AFTER_CMPSET_OFCLOSE);
 		SOCK_LOCK(so);
-		so->so_snd.sb_cc = 0;
-		so->so_snd.sb_mb = NULL;
-		so->so_snd.sb_mbcnt = 0;
-		
+		SCTP_SB_CLEAR(so->so_snd);
 		/* same for the rcv ones, they are only
 		 * here for the accounting/select.
 		 */
-		so->so_rcv.sb_cc = 0;
-		so->so_rcv.sb_mb = NULL;
-		so->so_rcv.sb_mbcnt = 0;
-		/* Now null out the reference, we are
-		 * completely detached.
-		 */
-#if !defined(SCTP_APPLE_FINE_GRAINED_LOCKING)
+		SCTP_SB_CLEAR(so->so_rcv);
+#if defined(__APPLE__)
+		so->so_usecount--;
+#else
+		/* Now null out the reference, we are completely detached. */
 		so->so_pcb = NULL;
 #endif
 		SOCK_UNLOCK(so);
@@ -761,10 +806,7 @@ sctp6_abort(struct socket *so)
 			goto sctp_must_try_again;
 		}
 	}
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	splx(s);
-#endif
-#if defined(__FreeBSD__) && __FreeBSD_version > 690000
+#if (defined(__FreeBSD__) && __FreeBSD_version > 690000) || defined(__Windows__)
 	return;
 #else
 	return (0);
@@ -776,66 +818,58 @@ static int
 sctp6_attach(struct socket *so, int proto, struct thread *p)
 #elif defined(__Panda__)
 int
-sctp6_attach(struct socket *so, int proto, uint32_t vrfid)
+sctp6_attach(struct socket *so, int proto, uint32_t vrf_id)
+#elif defined(__Windows__)
+static int
+sctp6_attach(struct socket *so, int proto, PKTHREAD p)
 #else
 static int
 sctp6_attach(struct socket *so, int proto, struct proc *p)
 #endif
 {
 	struct in6pcb *inp6;
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	int s;
-#endif
 	int error;
 	struct sctp_inpcb *inp;
+#if !defined(__Panda__)
+	uint32_t vrf_id = SCTP_DEFAULT_VRFID;
+#endif
 
 	inp = (struct sctp_inpcb *)so->so_pcb;
-	if (inp != NULL)
+	if (inp != NULL) {
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 		return EINVAL;
+	}
 
 	if (so->so_snd.sb_hiwat == 0 || so->so_rcv.sb_hiwat == 0) {
-		error = soreserve(so, sctp_sendspace, sctp_recvspace);
+		error = SCTP_SORESERVE(so, SCTP_BASE_SYSCTL(sctp_sendspace), SCTP_BASE_SYSCTL(sctp_recvspace));
 		if (error)
 			return error;
 	}
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	s = splsoftnet();
-#endif
-	error = sctp_inpcb_alloc(so);
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	splx(s);
-#endif
+	error = sctp_inpcb_alloc(so, vrf_id);
 	if (error)
 		return error;
 	inp = (struct sctp_inpcb *)so->so_pcb;
+	SCTP_INP_WLOCK(inp);
 	inp->sctp_flags |= SCTP_PCB_FLAGS_BOUND_V6;	/* I'm v6! */
 	inp6 = (struct in6pcb *)inp;
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 	inp6->inp_vflag |= INP_IPV6;
-#else
-#if defined(__OpenBSD__)
-	inp->ip_inp.inp.inp_flags |= INP_IPV6;
 #else
 	inp->inp_vflag |= INP_IPV6;
 #endif
-#endif
-#if defined(__NetBSD__)
-	if (ip6_v6only) {
-		inp6->in6p_flags |= IN6P_IPV6_V6ONLY;
-	}
-	so->so_send = sctp_sosend;
-#endif
+#if !defined(__Panda__)
 	inp6->in6p_hops = -1;	/* use kernel default */
 	inp6->in6p_cksum = -1;	/* just to be sure */
+#endif
 #ifdef INET
 	/*
 	 * XXX: ugly!! IPv4 TTL initialization is necessary for an IPv6
 	 * socket as well, because the socket may be bound to an IPv6
 	 * wildcard address, which may match an IPv4-mapped IPv6 address.
 	 */
-#if defined(__FreeBSD__) || defined(__APPLE__)
-	inp6->inp_ip_ttl = ip_defttl;
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
+	inp6->inp_ip_ttl = MODULE_GLOBAL(MOD_INET, ip_defttl);
 #else
 	inp->inp_ip_ttl = ip_defttl;
 #endif
@@ -844,62 +878,74 @@ sctp6_attach(struct socket *so, int proto, struct proc *p)
 	 * Hmm what about the IPSEC stuff that is missing here but in
 	 * sctp_attach()?
 	 */
+	SCTP_INP_WUNLOCK(inp);
 	return 0;
 }
 
-static int
 #if defined(__FreeBSD__) && __FreeBSD_version >= 500000
+static int
 sctp6_bind(struct socket *so, struct sockaddr *addr, struct thread *p)
 {
-#else
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#elif defined(__FreeBSD__) || defined(__APPLE__)
+static int
 sctp6_bind(struct socket *so, struct sockaddr *addr, struct proc *p)
 {
+#elif defined(__Panda__)
+int
+sctp6_bind(struct socket *so, struct sockaddr *addr, void * p)
+{
+#elif defined(__Windows__)
+static int
+sctp6_bind(struct socket *so, struct sockaddr *addr, PKTHREAD p)
+{
 #else
+static int
 sctp6_bind(struct socket *so, struct mbuf *nam, struct proc *p)
 {
 	struct sockaddr *addr = nam ? mtod(nam, struct sockaddr *): NULL;
 
 #endif
-#endif
 	struct sctp_inpcb *inp;
 	struct in6pcb *inp6;
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	int s;
-#endif
 	int error;
 
 	inp = (struct sctp_inpcb *)so->so_pcb;
-	if (inp == 0)
+	if (inp == 0) {
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 		return EINVAL;
+	}
 
+	if(addr) {
+#if !defined(__Windows__)
+		if((addr->sa_family == AF_INET6) && 
+		   (addr->sa_len != sizeof(struct sockaddr_in6))) {
+			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
+			return EINVAL;
+		}
+		if((addr->sa_family == AF_INET) && 
+		   (addr->sa_len != sizeof(struct sockaddr_in))) {
+			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
+			return EINVAL;
+		}
+#endif
+	}
 	inp6 = (struct in6pcb *)inp;
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 	inp6->inp_vflag &= ~INP_IPV4;
 	inp6->inp_vflag |= INP_IPV6;
-#else
-#if defined(__OpenBSD__)
-	inp->ip_inp.inp.inp_flags &= ~INP_IPV4;
-	inp->ip_inp.inp.inp_flags |= INP_IPV6;
 #else
 	inp->inp_vflag &= ~INP_IPV4;
 	inp->inp_vflag |= INP_IPV6;
 #endif
-#endif
 	if ((addr != NULL) && (SCTP_IPV6_V6ONLY(inp6) == 0)) {
 		if (addr->sa_family == AF_INET) {
 			/* binding v4 addr to v6 socket, so reset flags */
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 			inp6->inp_vflag |= INP_IPV4;
 			inp6->inp_vflag &= ~INP_IPV6;
 #else
-#if defined(__OpenBSD__)
-			inp->ip_inp.inp.inp_flags |= INP_IPV4;
-			inp->ip_inp.inp.inp_flags &= ~INP_IPV6;
-#else
 			inp->inp_vflag |= INP_IPV4;
 			inp->inp_vflag &= ~INP_IPV6;
-#endif
 #endif
 		} else {
 			struct sockaddr_in6 *sin6_p;
@@ -907,39 +953,23 @@ sctp6_bind(struct socket *so, struct mbuf *nam, struct proc *p)
 			sin6_p = (struct sockaddr_in6 *)addr;
 
 			if (IN6_IS_ADDR_UNSPECIFIED(&sin6_p->sin6_addr)) {
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 				inp6->inp_vflag |= INP_IPV4;
 #else
-#if defined(__OpenBSD__)
-				inp->ip_inp.inp.inp_flags |= INP_IPV4;
-#else
 				inp->inp_vflag |= INP_IPV4;
-#endif
 #endif
 			} else if (IN6_IS_ADDR_V4MAPPED(&sin6_p->sin6_addr)) {
 				struct sockaddr_in sin;
 
 				in6_sin6_2_sin(&sin, sin6_p);
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 				inp6->inp_vflag |= INP_IPV4;
 				inp6->inp_vflag &= ~INP_IPV6;
-#else
-#if defined(__OpenBSD__)
-				inp->ip_inp.inp.inp_flags |= INP_IPV4;
-				inp->ip_inp.inp.inp_flags &= ~INP_IPV6;
-
 #else
 				inp->inp_vflag |= INP_IPV4;
 				inp->inp_vflag &= ~INP_IPV6;
 #endif
-#endif
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-				s = splsoftnet();
-#endif
-				error = sctp_inpcb_bind(so, (struct sockaddr *)&sin, p);
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-				splx(s);
-#endif
+				error = sctp_inpcb_bind(so, (struct sockaddr *)&sin, NULL, p);
 				return error;
 			}
 		}
@@ -947,310 +977,56 @@ sctp6_bind(struct socket *so, struct mbuf *nam, struct proc *p)
 		/* IPV6_V6ONLY socket */
 		if (addr->sa_family == AF_INET) {
 			/* can't bind v4 addr to v6 only socket! */
+			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 			return EINVAL;
 		} else {
 			struct sockaddr_in6 *sin6_p;
 
 			sin6_p = (struct sockaddr_in6 *)addr;
 
-			if (IN6_IS_ADDR_V4MAPPED(&sin6_p->sin6_addr))
+			if (IN6_IS_ADDR_V4MAPPED(&sin6_p->sin6_addr)) {
 				/* can't bind v4-mapped addrs either! */
 				/* NOTE: we don't support SIIT */
+				SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 				return EINVAL;
+            }
 		}
 	}
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	s = splsoftnet();
-#endif
-	error = sctp_inpcb_bind(so, addr, p);
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	splx(s);
-#endif
+	error = sctp_inpcb_bind(so, addr, NULL, p);
 	return error;
 }
 
-#if defined(__FreeBSD__) && __FreeBSD_version > 690000
+#if (defined(__FreeBSD__) && __FreeBSD_version > 690000) || defined(__Windows__)
 
-static void	
+static void
 sctp6_close(struct socket *so)
 {
-	struct sctp_inpcb *inp;
-	uint32_t flags;
-	inp = (struct sctp_inpcb *)so->so_pcb;
-	if (inp == 0)
-		return;
-
-	/* Inform all the lower layer assoc that we
-	 * are done.
-	 */
- sctp_must_try_again:
-	flags = inp->sctp_flags;
-#ifdef SCTP_LOG_CLOSING
-	sctp_log_closing(inp, NULL, 17);
-#endif
-	if (((flags & SCTP_PCB_FLAGS_SOCKET_GONE) == 0) &&
-	    (atomic_cmpset_int(&inp->sctp_flags, flags, (flags | SCTP_PCB_FLAGS_SOCKET_GONE | SCTP_PCB_FLAGS_CLOSE_IP)))) {
-		if (((so->so_options & SO_LINGER) && (so->so_linger == 0)) ||
-		    (so->so_rcv.sb_cc > 0)) {
-#ifdef SCTP_LOG_CLOSING
-			sctp_log_closing(inp, NULL, 13);
-#endif
-			sctp_inpcb_free(inp, 1, 1);
-		} else {
-#ifdef SCTP_LOG_CLOSING
-			sctp_log_closing(inp, NULL, 14);
-#endif
-			sctp_inpcb_free(inp, 0, 1);
-		}
-		/* The socket is now detached, no matter what
-		 * the state of the SCTP association.
-		 */
-		SOCK_LOCK(so);
-		so->so_snd.sb_cc = 0;
-		so->so_snd.sb_mb = NULL;
-		so->so_snd.sb_mbcnt = 0;
-		
-		/* same for the rcv ones, they are only
-		 * here for the accounting/select.
-		 */
-		so->so_rcv.sb_cc = 0;
-		so->so_rcv.sb_mb = NULL;
-		so->so_rcv.sb_mbcnt = 0;
-		/* Now null out the reference, we are
-		 * completely detached.
-		 */
-#if !defined(SCTP_APPLE_FINE_GRAINED_LOCKING)
-		so->so_pcb = NULL;
-#endif
-		SOCK_UNLOCK(so);
-	} else {
-		flags = inp->sctp_flags;
-		if ((flags & SCTP_PCB_FLAGS_SOCKET_GONE) == 0) {
-			goto sctp_must_try_again;
-		}
-	}
-	return;
-
+	sctp_close(so);
 }
 
 /* This could be made common with sctp_detach() since they are identical */
-#elif defined(__Panda__)
+#else
+
+#if !defined(__Panda__)
+static
+#endif
 int
 sctp6_detach(struct socket *so)
-#else
-static int
-sctp6_detach(struct socket *so)
 {
-	struct sctp_inpcb *inp;
-	uint32_t flags;
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	int s;
-#endif
-	inp = (struct sctp_inpcb *)so->so_pcb;
-	if (inp == 0)
-		return EINVAL;
-
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	s = splsoftnet();
-#endif
- sctp_must_try_again:
-	flags = inp->sctp_flags;
-#ifdef SCTP_LOG_CLOSING
-	sctp_log_closing(inp, NULL, 17);
-#endif
-	if (((flags & SCTP_PCB_FLAGS_SOCKET_GONE) == 0) &&
-	    (atomic_cmpset_int(&inp->sctp_flags, flags, (flags | SCTP_PCB_FLAGS_SOCKET_GONE | SCTP_PCB_FLAGS_CLOSE_IP)))) {
-		if (((so->so_options & SO_LINGER) && (so->so_linger == 0)) ||
-		    (so->so_rcv.sb_cc > 0)) {
-#ifdef SCTP_LOG_CLOSING
-			sctp_log_closing(inp, NULL, 13);
-#endif
-			sctp_inpcb_free(inp, 1, 1);
-		} else {
-#ifdef SCTP_LOG_CLOSING
-			sctp_log_closing(inp, NULL, 14);
-#endif
-			sctp_inpcb_free(inp, 0, 1);
-		}
-		
-		/* The socket is now detached, no matter what
-		 * the state of the SCTP association.
-		 */
-		SOCK_LOCK(so);
-		so->so_snd.sb_cc = 0;
-		so->so_snd.sb_mb = NULL;
-		so->so_snd.sb_mbcnt = 0;
-		
-		/* same for the rcv ones, they are only
-		 * here for the accounting/select.
-		 */
-		so->so_rcv.sb_cc = 0;
-		so->so_rcv.sb_mb = NULL;
-		so->so_rcv.sb_mbcnt = 0;
-		/* Now null out the reference, we are
-		 * completely detached.
-		 */
-		/* Now disconnect */
-#if !defined(SCTP_APPLE_FINE_GRAINED_LOCKING)
-		/* MT FIXME: Is there anything to do here for Tiger ? */
-		so->so_pcb = NULL;
-#endif
-		SOCK_UNLOCK(so);
-	} else {
-		flags = inp->sctp_flags;
-		if ((flags & SCTP_PCB_FLAGS_SOCKET_GONE) == 0) {
-			goto sctp_must_try_again;
-		}
-	}
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	splx(s);
-#endif
-	return (0);
+	return (sctp_detach(so));
 }
+
 #endif
 
-static int
+#if !defined(__Panda__)
+static 
+#endif
+int
 sctp6_disconnect(struct socket *so)
 {
-	struct sctp_inpcb *inp;
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	int s;
-	s = splsoftnet();
-#endif
-
-	inp = (struct sctp_inpcb *)so->so_pcb;
-	if (inp == NULL) {
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-		splx(s);
-#endif
-		return (ENOTCONN);
-	}
-	SCTP_INP_RLOCK(inp);
-	if (inp->sctp_flags & SCTP_PCB_FLAGS_TCPTYPE) {
-		if (SCTP_LIST_EMPTY(&inp->sctp_asoc_list)) {
-			/* No connection */
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-			splx(s);
-#endif
-			SCTP_INP_RUNLOCK(inp);
-			return (ENOTCONN);
-		} else {
-			int some_on_streamwheel = 0;
-			struct sctp_association *asoc;
-			struct sctp_tcb *stcb;
-
-			stcb = LIST_FIRST(&inp->sctp_asoc_list);
-			if (stcb == NULL) {
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-				splx(s);
-#endif
-				SCTP_INP_RUNLOCK(inp);
-				return (EINVAL);
-			}
-			SCTP_TCB_LOCK(stcb);
-			asoc = &stcb->asoc;
-			if (((so->so_options & SO_LINGER) &&
-			    (so->so_linger == 0)) ||
-			    (so->so_rcv.sb_cc > 0)) {
-				if (SCTP_GET_STATE(asoc) !=
-				    SCTP_STATE_COOKIE_WAIT) {
-					/* Left with Data unread */
-					struct mbuf *err;
-
-					err = NULL;
-					MGET(err, M_DONTWAIT, MT_DATA);
-					if (err) {
-						/*
-						 * Fill in the user
-						 * initiated abort
-						 */
-						struct sctp_paramhdr *ph;
-
-						ph = mtod(err, struct sctp_paramhdr *);
-						SCTP_BUF_LEN(err) = sizeof(struct sctp_paramhdr);
-						ph->param_type = htons(SCTP_CAUSE_USER_INITIATED_ABT);
-						ph->param_length = htons(SCTP_BUF_LEN(err));
-					}
-					sctp_send_abort_tcb(stcb, err);
-					SCTP_STAT_INCR_COUNTER32(sctps_aborted);
-				}
-				SCTP_INP_RUNLOCK(inp);
-				if ((SCTP_GET_STATE(&stcb->asoc) == SCTP_STATE_OPEN) ||
-				    (SCTP_GET_STATE(&stcb->asoc) == SCTP_STATE_SHUTDOWN_RECEIVED)) {
-					SCTP_STAT_DECR_GAUGE32(sctps_currestab);
-				}
-				sctp_free_assoc(inp, stcb, SCTP_DONOT_SETSCOPE,
-						SCTP_FROM_SCTP6_USRREQ+SCTP_LOC_2);
-				/* No unlock tcb assoc is gone */
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-				splx(s);
-#endif
-				return (0);
-			}
-			if (!TAILQ_EMPTY(&asoc->out_wheel)) {
-				/* Check to see if some data queued */
-				struct sctp_stream_out *outs;
-
-				TAILQ_FOREACH(outs, &asoc->out_wheel,
-				    next_spoke) {
-					if (!TAILQ_EMPTY(&outs->outqueue)) {
-						some_on_streamwheel = 1;
-						break;
-					}
-				}
-			}
-			if (TAILQ_EMPTY(&asoc->send_queue) &&
-			    TAILQ_EMPTY(&asoc->sent_queue) &&
-			    (some_on_streamwheel == 0)) {
-				/* nothing queued to send, so I'm done... */
-				if ((SCTP_GET_STATE(asoc) !=
-				    SCTP_STATE_SHUTDOWN_SENT) &&
-				    (SCTP_GET_STATE(asoc) !=
-				    SCTP_STATE_SHUTDOWN_ACK_SENT)) {
-					/* only send SHUTDOWN the first time */
-					sctp_send_shutdown(stcb, stcb->asoc.primary_destination);
-					sctp_chunk_output(stcb->sctp_ep, stcb, 1);
-					if ((SCTP_GET_STATE(asoc) == SCTP_STATE_OPEN) ||
-					    (SCTP_GET_STATE(asoc) == SCTP_STATE_SHUTDOWN_RECEIVED)) {
-						SCTP_STAT_DECR_GAUGE32(sctps_currestab);
-					}
-					asoc->state = SCTP_STATE_SHUTDOWN_SENT;
-					sctp_timer_start(SCTP_TIMER_TYPE_SHUTDOWN,
-					    stcb->sctp_ep, stcb,
-					    asoc->primary_destination);
-					sctp_timer_start(SCTP_TIMER_TYPE_SHUTDOWNGUARD,
-					    stcb->sctp_ep, stcb,
-					    asoc->primary_destination);
-				}
-			} else {
-				/*
-				 * we still got (or just got) data to send,
-				 * so set SHUTDOWN_PENDING
-				 */
-				/*
-				 * XXX sockets draft says that MSG_EOF
-				 * should be sent with no data.  currently,
-				 * we will allow user data to be sent first
-				 * and move to SHUTDOWN-PENDING
-				 */
-				asoc->state |= SCTP_STATE_SHUTDOWN_PENDING;
-			}
-			SCTP_TCB_UNLOCK(stcb);
-			SCTP_INP_RUNLOCK(inp);
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-			splx(s);
-#endif
-			return (0);
-		}
-	} else {
-		/* UDP model does not support this */
-		SCTP_INP_RUNLOCK(inp);
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-		splx(s);
-#endif
-		return EOPNOTSUPP;
-	}
+	return(sctp_disconnect(so));
 }
+
 
 int
 #if defined(__FreeBSD__) && __FreeBSD_version >= 500000
@@ -1263,24 +1039,23 @@ sctp_sendm(struct socket *so, int flags, struct mbuf *m, struct sockaddr *addr,
 
 #endif
 
-
-static int
+#if !(defined(__Panda__) || defined(__Windows__))
 #if defined(__FreeBSD__) && __FreeBSD_version >= 500000
+static int
 sctp6_send(struct socket *so, int flags, struct mbuf *m, struct sockaddr *addr,
     struct mbuf *control, struct thread *p)
 {
-#else
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#elif defined(__FreeBSD__) || defined(__APPLE__)
+static int
 sctp6_send(struct socket *so, int flags, struct mbuf *m, struct sockaddr *addr,
     struct mbuf *control, struct proc *p)
 {
 #else
+static int
 sctp6_send(struct socket *so, int flags, struct mbuf *m, struct mbuf *nam,
     struct mbuf *control, struct proc *p)
 {
 	struct sockaddr *addr = nam ? mtod(nam, struct sockaddr *): NULL;
-
-#endif
 #endif
 	struct sctp_inpcb *inp;
 	struct inpcb *in_inp;
@@ -1288,17 +1063,17 @@ sctp6_send(struct socket *so, int flags, struct mbuf *m, struct mbuf *nam,
 
 #ifdef INET
 	struct sockaddr_in6 *sin6;
-
-#endif				/* INET */
+#endif /* INET */
 	/* No SPL needed since sctp_output does this */
 
 	inp = (struct sctp_inpcb *)so->so_pcb;
 	if (inp == NULL) {
 		if (control) {
-			m_freem(control);
+			SCTP_RELEASE_PKT(control);
 			control = NULL;
 		}
-		m_freem(m);
+		SCTP_RELEASE_PKT(m);
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 		return EINVAL;
 	}
 	in_inp = (struct inpcb *)inp;
@@ -1312,11 +1087,12 @@ sctp6_send(struct socket *so, int flags, struct mbuf *m, struct mbuf *nam,
 		goto connected_type;
 	}
 	if (addr == NULL) {
-		m_freem(m);
+		SCTP_RELEASE_PKT(m);
 		if (control) {
-			m_freem(control);
+			SCTP_RELEASE_PKT(control);
 			control = NULL;
 		}
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EDESTADDRREQ);
 		return (EDESTADDRREQ);
 	}
 #ifdef INET
@@ -1327,14 +1103,16 @@ sctp6_send(struct socket *so, int flags, struct mbuf *m, struct mbuf *nam,
 		 * v4 addr or v4-mapped addr
 		 */
 		if (addr->sa_family == AF_INET) {
+			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 			return EINVAL;
 		}
 		if (IN6_IS_ADDR_V4MAPPED(&sin6->sin6_addr)) {
+			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 			return EINVAL;
 		}
 	}
 	if (IN6_IS_ADDR_V4MAPPED(&sin6->sin6_addr)) {
-		if (!ip6_v6only) {
+		if (!MODULE_GLOBAL(MOD_INET6, ip6_v6only)) {
 			struct sockaddr_in sin;
 
 			/* convert v4-mapped into v4 addr and send */
@@ -1343,6 +1121,7 @@ sctp6_send(struct socket *so, int flags, struct mbuf *m, struct mbuf *nam,
 			    control, p);
 		} else {
 			/* mapped addresses aren't enabled */
+			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 			return EINVAL;
 		}
 	}
@@ -1351,8 +1130,8 @@ connected_type:
 	/* now what about control */
 	if (control) {
 		if (inp->control) {
-			printf("huh? control set?\n");
-			m_freem(inp->control);
+			SCTP_PRINTF("huh? control set?\n");
+			SCTP_RELEASE_PKT(inp->control);
 			inp->control = NULL;
 		}
 		inp->control = control;
@@ -1368,9 +1147,6 @@ connected_type:
 #if defined(__FreeBSD__) || defined(__APPLE__)
 	/* FreeBSD and MacOSX uses a flag passed */
 	    ((flags & PRUS_MORETOCOME) == 0)
-#elif defined(__NetBSD__)
-	/* NetBSD uses the so_state field */
-	    ((so->so_state & SS_MORETOCOME) == 0)
 #else
 	    1			/* Open BSD does not have any "more to come"
 				 * indication */
@@ -1393,24 +1169,29 @@ connected_type:
 		return (0);
 	}
 }
+#endif
 
-static int
 #if defined(__FreeBSD__) && __FreeBSD_version >= 500000
+static int
 sctp6_connect(struct socket *so, struct sockaddr *addr, struct thread *p)
 {
-#else
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#elif defined(__FreeBSD__) || defined(__APPLE__)
+static int
 sctp6_connect(struct socket *so, struct sockaddr *addr, struct proc *p)
 {
+#elif defined(__Panda__)
+int
+sctp6_connect(struct socket *so, struct sockaddr *addr, void *p)
+{
+#elif defined(__Windows__)
+static int
+sctp6_connect(struct socket *so, struct sockaddr *addr, PKTHREAD p)
+{
 #else
+static int
 sctp6_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 {
 	struct sockaddr *addr = mtod(nam, struct sockaddr *);
-
-#endif
-#endif
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	int s = splsoftnet();
 #endif
 	uint32_t vrf_id;
 	int error = 0;
@@ -1427,17 +1208,26 @@ sctp6_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 	inp6 = (struct in6pcb *)so->so_pcb;
 	inp = (struct sctp_inpcb *)so->so_pcb;
 	if (inp == 0) {
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-		splx(s);
-#endif
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, ECONNRESET);
 		return (ECONNRESET);	/* I made the same as TCP since we are
 					 * not setup? */
 	}
-#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__APPLE__)
-	vrf_id = SCTP_DEFAULT_VRFID;
-#else
-	vrf_id = panda_get_vrf_from_call(); /* from socket option call? */
+	if(addr == NULL) {
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
+		return (EINVAL);
+	}
+#if !defined(__Windows__)
+	if ((addr->sa_family == AF_INET6) && (addr->sa_len != sizeof(struct sockaddr_in6))) {
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
+		return (EINVAL);
+	}
+	if ((addr->sa_family == AF_INET) && (addr->sa_len != sizeof(struct sockaddr_in))) {
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
+		return (EINVAL);
+	}
 #endif
+
+	vrf_id = inp->def_vrf_id;
 	SCTP_ASOC_CREATE_LOCK(inp);
 	SCTP_INP_RLOCK(inp);
 	if ((inp->sctp_flags & SCTP_PCB_FLAGS_UNBOUND) ==
@@ -1446,9 +1236,6 @@ sctp6_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 		SCTP_INP_RUNLOCK(inp);
 		error = sctp6_bind(so, NULL, p);
 		if (error) {
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-			splx(s);
-#endif
 			SCTP_ASOC_CREATE_UNLOCK(inp);
 
 			return (error);
@@ -1458,11 +1245,9 @@ sctp6_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 	if ((inp->sctp_flags & SCTP_PCB_FLAGS_TCPTYPE) &&
 	    (inp->sctp_flags & SCTP_PCB_FLAGS_CONNECTED)) {
 		/* We are already connected AND the TCP model */
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-		splx(s);
-#endif
 		SCTP_INP_RUNLOCK(inp);
 		SCTP_ASOC_CREATE_UNLOCK(inp);
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EADDRINUSE);
 		return (EADDRINUSE);
 	}
 #ifdef INET
@@ -1473,34 +1258,28 @@ sctp6_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 		 * addr or v4-mapped addr
 		 */
 		if (addr->sa_family == AF_INET) {
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-			splx(s);
-#endif
 			SCTP_INP_RUNLOCK(inp);
 			SCTP_ASOC_CREATE_UNLOCK(inp);
+			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 			return EINVAL;
 		}
 		if (IN6_IS_ADDR_V4MAPPED(&sin6->sin6_addr)) {
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-			splx(s);
-#endif
 			SCTP_INP_RUNLOCK(inp);
 			SCTP_ASOC_CREATE_UNLOCK(inp);
+			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 			return EINVAL;
 		}
 	}
 	if (IN6_IS_ADDR_V4MAPPED(&sin6->sin6_addr)) {
-		if (!ip6_v6only) {
+		if (!MODULE_GLOBAL(MOD_INET6, ip6_v6only)) {
 			/* convert v4-mapped into v4 addr */
 			in6_sin6_2_sin((struct sockaddr_in *)&ss, sin6);
 			addr = (struct sockaddr *)&ss;
 		} else {
 			/* mapped addresses aren't enabled */
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-			splx(s);
-#endif
 			SCTP_INP_RUNLOCK(inp);
 			SCTP_ASOC_CREATE_UNLOCK(inp);
+			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 			return EINVAL;
 		}
 	} else
@@ -1510,8 +1289,9 @@ sctp6_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 	/* Now do we connect? */
 	if (inp->sctp_flags & SCTP_PCB_FLAGS_CONNECTED) {
 		stcb = LIST_FIRST(&inp->sctp_asoc_list);
-		if (stcb)
+		if (stcb) {
 			SCTP_TCB_UNLOCK(stcb);
+		}
 		SCTP_INP_RUNLOCK(inp);
 	} else {
 		SCTP_INP_RUNLOCK(inp);
@@ -1530,19 +1310,14 @@ sctp6_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 		/* Already have or am bring up an association */
 		SCTP_ASOC_CREATE_UNLOCK(inp);
 		SCTP_TCB_UNLOCK(stcb);
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-		splx(s);
-#endif
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EALREADY);
 		return (EALREADY);
 	}
 	/* We are GOOD to go */
-	stcb = sctp_aloc_assoc(inp, addr, 1, &error, 0, vrf_id);
+	stcb = sctp_aloc_assoc(inp, addr, 1, &error, 0, vrf_id, p);
 	SCTP_ASOC_CREATE_UNLOCK(inp);
 	if (stcb == NULL) {
 		/* Gak! no memory */
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-		splx(s);
-#endif
 		return (error);
 	}
 	if (stcb->sctp_ep->sctp_flags & SCTP_PCB_FLAGS_TCPTYPE) {
@@ -1551,21 +1326,18 @@ sctp6_connect(struct socket *so, struct mbuf *nam, struct proc *p)
 		soisconnecting(so);
 	}
 	stcb->asoc.state = SCTP_STATE_COOKIE_WAIT;
-	SCTP_GETTIME_TIMEVAL(&stcb->asoc.time_entered);
+	(void)SCTP_GETTIME_TIMEVAL(&stcb->asoc.time_entered);
 
 	/* initialize authentication parameters for the assoc */
 	sctp_initialize_auth_params(inp, stcb);
 
-	sctp_send_initiate(inp, stcb);
+	sctp_send_initiate(inp, stcb, SCTP_SO_LOCKED);
 	SCTP_TCB_UNLOCK(stcb);
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	splx(s);
-#endif
 	return error;
 }
 
 static int
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 sctp6_getaddr(struct socket *so, struct sockaddr **addr)
 {
 	struct sockaddr_in6 *sin6;
@@ -1584,12 +1356,12 @@ sctp6_getaddr(struct socket *so, struct mbuf *nam)
 
 #ifdef SCTP_KAME
 	int error;
-#endif				/* SCTP_KAME */
+#endif /* SCTP_KAME */
 
 	/*
 	 * Do the malloc first in case it blocks.
 	 */
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 	SCTP_MALLOC_SONAME(sin6, struct sockaddr_in6 *, sizeof *sin6);
 #elif defined(__Panda__)
 	bzero(sin6, sizeof(*sin6));
@@ -1598,13 +1370,16 @@ sctp6_getaddr(struct socket *so, struct mbuf *nam)
 	bzero(sin6, sizeof(*sin6));
 #endif
 	sin6->sin6_family = AF_INET6;
+#if !defined(__Windows__)
 	sin6->sin6_len = sizeof(*sin6);
+#endif
 
 	inp = (struct sctp_inpcb *)so->so_pcb;
 	if (inp == NULL) {
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 		SCTP_FREE_SONAME(sin6);
 #endif
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, ECONNRESET);
 		return ECONNRESET;
 	}
 	SCTP_INP_RLOCK(inp);
@@ -1616,7 +1391,6 @@ sctp6_getaddr(struct socket *so, struct mbuf *nam)
 			struct sockaddr_in6 *sin_a6;
 			struct sctp_nets *net;
 			int fnd;
-
 			stcb = LIST_FIRST(&inp->sctp_asoc_list);
 			if (stcb == NULL) {
 				goto notConn6;
@@ -1638,13 +1412,8 @@ sctp6_getaddr(struct socket *so, struct mbuf *nam)
 				/* punt */
 				goto notConn6;
 			}
-#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__APPLE__)
-			vrf_id = SCTP_DEFAULT_VRFID;
-#else
-			vrf_id = panda_get_vrf_from_call(); /* from socket option call? */
-#endif
-
-			sctp_ifa = sctp_source_address_selection(inp, stcb, (struct route *)&net->ro, net, 0, vrf_id);
+			vrf_id = inp->def_vrf_id;
+			sctp_ifa = sctp_source_address_selection(inp, stcb, (sctp_route_t *)&net->ro, net, 0, vrf_id);
 			if (sctp_ifa) {
 				sin6->sin6_addr = sctp_ifa->address.sin6.sin6_addr;
 			}
@@ -1669,10 +1438,11 @@ sctp6_getaddr(struct socket *so, struct mbuf *nam)
 			}
 		}
 		if (!fnd) {
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 			SCTP_FREE_SONAME(sin6);
 #endif
 			SCTP_INP_RUNLOCK(inp);
+			SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, ENOENT);
 			return ENOENT;
 		}
 	}
@@ -1692,14 +1462,14 @@ sctp6_getaddr(struct socket *so, struct mbuf *nam)
 		sin6->sin6_scope_id = 0;	/* XXX */
 #endif /* SCTP_KAME */
 #endif /* SCTP_EMBEDDED_V6_SCOPE */
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 	(*addr) = (struct sockaddr *)sin6;
 #endif
 	return (0);
 }
 
 static int
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 sctp6_peeraddr(struct socket *so, struct sockaddr **addr)
 {
 	struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)*addr;
@@ -1728,37 +1498,42 @@ sctp6_peeraddr(struct socket *so, struct mbuf *nam)
 	inp = (struct sctp_inpcb *)so->so_pcb;
 	if ((inp->sctp_flags & SCTP_PCB_FLAGS_CONNECTED) == 0) {
 		/* UDP type and listeners will drop out here */
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, ENOTCONN);
 		return (ENOTCONN);
 	}
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 	SCTP_MALLOC_SONAME(sin6, struct sockaddr_in6 *, sizeof *sin6);
 #elif defined(__Panda__)
 	bzero(sin6, sizeof(*sin6));
-	*addrlen = sizeof(*sin6);
 #else
 	SCTP_BUF_LEN(nam) = sizeof(*sin6);
 	bzero(sin6, sizeof(*sin6));
 #endif
 	sin6->sin6_family = AF_INET6;
+#if !defined(__Windows__)
 	sin6->sin6_len = sizeof(*sin6);
+#endif
 
 	/* We must recapture incase we blocked */
 	inp = (struct sctp_inpcb *)so->so_pcb;
 	if (inp == NULL) {
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 		SCTP_FREE_SONAME(sin6);
 #endif
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, ECONNRESET);
 		return ECONNRESET;
 	}
 	SCTP_INP_RLOCK(inp);
 	stcb = LIST_FIRST(&inp->sctp_asoc_list);
-	if (stcb)
+	if (stcb) {
 		SCTP_TCB_LOCK(stcb);
+	}
 	SCTP_INP_RUNLOCK(inp);
 	if (stcb == NULL) {
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 		SCTP_FREE_SONAME(sin6);
 #endif
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, ECONNRESET);
 		return ECONNRESET;
 	}
 	fnd = 0;
@@ -1774,9 +1549,10 @@ sctp6_peeraddr(struct socket *so, struct mbuf *nam)
 	SCTP_TCB_UNLOCK(stcb);
 	if (!fnd) {
 		/* No IPv4 address */
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 		SCTP_FREE_SONAME(sin6);
 #endif
+		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, ENOENT);
 		return ENOENT;
 	}
 #ifdef SCTP_EMBEDDED_V6_SCOPE
@@ -1787,13 +1563,13 @@ sctp6_peeraddr(struct socket *so, struct mbuf *nam)
 	in6_recoverscope(sin6, &sin6->sin6_addr, NULL);
 #endif /* SCTP_KAME */
 #endif /* SCTP_EMBEDDED_V6_SCOPE */
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 	*addr = (struct sockaddr *)sin6;
 #endif
 	return (0);
 }
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 static int
 sctp6_in6getaddr(struct socket *so, struct sockaddr **nam)
 {
@@ -1810,29 +1586,22 @@ sctp6_in6getaddr(struct socket *so, struct mbuf *nam)
 	struct sockaddr *addr = mtod(nam, struct sockaddr *);
 #endif
 	struct in6pcb *inp6 = sotoin6pcb(so);
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	int s;
-#endif
 	int error;
 
-	if (inp6 == NULL)
+	if (inp6 == NULL) {
+		SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 		return EINVAL;
+	}
 
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	s = splsoftnet();
-#endif
 	/* allow v6 addresses precedence */
 	error = sctp6_getaddr(so, nam);
 	if (error) {
 		/* try v4 next if v6 failed */
 		error = sctp_ingetaddr(so, nam);
 		if (error) {
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-			splx(s);
-#endif
 			return (error);
 		}
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 		addr = *nam;
 #endif
 		/* if I'm V6ONLY, convert it to v4-mapped */
@@ -1841,30 +1610,26 @@ sctp6_in6getaddr(struct socket *so, struct mbuf *nam)
 
 			in6_sin_2_v4mapsin6((struct sockaddr_in *)addr, &sin6);
 			memcpy(addr, &sin6, sizeof(struct sockaddr_in6));
-#if !(defined(__FreeBSD__) || defined(__APPLE__))
-			SCTP_BUF_LEN(nam) = sizeof(sin6);
+#if defined(__Panda__) 
+			*namelen = sizeof(sin6);
 #endif
-#if !(defined(__FreeBSD__) || defined(__APPLE__))
-		} else {
-			SCTP_BUF_LEN(nam) = sizeof(struct sockaddr_in);
+
+#if defined(__Panda__)
+			*namelen = sizeof(struct sockaddr_in);
 #endif
 		}
-#if !(defined(__FreeBSD__) || defined(__APPLE__))
-	} else {
-		SCTP_BUF_LEN(nam) = sizeof(struct sockaddr_in6);
+#if defined(__Panda__)
+		*namelen = sizeof(struct sockaddr_in6);
 #endif
 	}
 #if defined(__Panda__)
 	*namelen = nam->sa_len;
 #endif
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	splx(s);
-#endif
 	return (error);
 }
 
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 static int
 sctp6_getpeeraddr(struct socket *so, struct sockaddr **nam)
 {
@@ -1883,25 +1648,18 @@ sctp6_getpeeraddr(struct socket *so, struct mbuf *nam)
 #endif
 	struct in6pcb *inp6 = sotoin6pcb(so);
 	int error;
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	int s;
-#endif
 
-	if (inp6 == NULL)
+	if (inp6 == NULL) {
+		SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 		return EINVAL;
+	}
 
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	s = splsoftnet();
-#endif
 	/* allow v6 addresses precedence */
 	error = sctp6_peeraddr(so, nam);
 	if (error) {
 		/* try v4 next if v6 failed */
 		error = sctp_peeraddr(so, nam);
 		if (error) {
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-			splx(s);
-#endif
 			return (error);
 		}
 		/* if I'm V6ONLY, convert it to v4-mapped */
@@ -1910,29 +1668,24 @@ sctp6_getpeeraddr(struct socket *so, struct mbuf *nam)
 
 			in6_sin_2_v4mapsin6((struct sockaddr_in *)addr, &sin6);
 			memcpy(addr, &sin6, sizeof(struct sockaddr_in6));
-#if !(defined(__FreeBSD__) || defined(__APPLE__))
-			SCTP_BUF_LEN(nam) = sizeof(sin6);
+#if defined(__Panda__)
+			*namelen = sizeof(sin6);
 #endif
-#if !(defined(__FreeBSD__) || defined(__APPLE__))
-		} else {
-			SCTP_BUF_LEN(nam) = sizeof(struct sockaddr_in);
+#if defined(__Panda__)
+			*namelen = sizeof(struct sockaddr_in);
 #endif
 		}
-#if !(defined(__FreeBSD__) || defined(__APPLE__))
-	} else {
-		SCTP_BUF_LEN(nam) = sizeof(struct sockaddr_in6);
+#if defined(__Panda__)
+		*namelen = sizeof(struct sockaddr_in6);
 #endif
 	}
 #if defined(__Panda__)
 	*namelen = nam->sa_len;
 #endif
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	splx(s);
-#endif
 	return error;
 }
 
-#if defined(__FreeBSD__) || defined(__APPLE__)
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Windows__)
 struct pr_usrreqs sctp6_usrreqs = {
 #if __FreeBSD_version >= 600000
 	.pru_abort = sctp6_abort,
@@ -1945,6 +1698,7 @@ struct pr_usrreqs sctp6_usrreqs = {
 	.pru_close = sctp6_close,
 	.pru_detach = sctp6_close,
 	.pru_sopoll = sopoll_generic,
+	.pru_flush = sctp_flush,	
 #else
 	.pru_detach = sctp6_detach,
 	.pru_sopoll = sopoll,
@@ -1964,25 +1718,42 @@ struct pr_usrreqs sctp6_usrreqs = {
 	sctp6_bind,
 	sctp6_connect,
 	pru_connect2_notsupp,
+#if defined(__Windows__)
+	NULL,
+	NULL,
+#else
 	in6_control,
 	sctp6_detach,
+#endif
 	sctp6_disconnect,
 	sctp_listen,
 	sctp6_getpeeraddr,
 	NULL,
 	pru_rcvoob_notsupp,
+#if defined(__Windows__)
+	NULL,
+#else
 	sctp6_send,
+#endif
 	pru_sense_null,
 	sctp_shutdown,
+#if defined(__Windows__)
+	sctp_flush,
+#endif
 	sctp6_in6getaddr,
 	sctp_sosend,
 	sctp_soreceive,
-	sopoll
+#if !defined(__Windows__)
+ 	sopoll
+#else
+	sopoll_generic,
+	NULL,
+	sctp6_close
+#endif
 #endif
 };
 
-#else
-
+#elif !defined(__Panda__)
 int
 sctp6_usrreq(so, req, m, nam, control, p)
 	struct socket *so;
@@ -1994,12 +1765,6 @@ sctp6_usrreq(so, req, m, nam, control, p)
 	int error = 0;
 	int family;
 	uint32_t vrf_id;
-#if defined(__OpenBSD__)
-	p = curproc;
-#endif
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	s = splsoftnet();
-#endif
 	family = so->so_proto->pr_domain->dom_family;
 
 	if (req == PRU_CONTROL) {
@@ -2007,9 +1772,6 @@ sctp6_usrreq(so, req, m, nam, control, p)
 		case PF_INET:
 			error = in_control(so, (long)m, (caddr_t)nam,
 			    (struct ifnet *)control
-#if defined(__NetBSD__)
-			    ,p
-#endif
 			    );
 #ifdef INET6
 		case PF_INET6:
@@ -2017,52 +1779,11 @@ sctp6_usrreq(so, req, m, nam, control, p)
 			    (struct ifnet *)control, p);
 #endif
 		default:
+			SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EAFNOSUPPORT);
 			error = EAFNOSUPPORT;
 		}
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-		splx(s);
-#endif
 		return (error);
 	}
-#ifdef __NetBSD__
-	if (req == PRU_PURGEIF) {
-		struct ifnet *ifn;
-		struct sctp_ifn *sctp_ifn;
-		struct sctp_ifa *sctp_ifa;
-
-		ifn = (struct ifnet *)control;
-#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__APPLE__)
-		vrf = SCTP_DEFAULT_VRFID;
-#else
-		vrf = panda_get_vrf_from_call(); /* from socket option call? */
-#endif
-		sctp_ifn = sctp_find_ifn(vrf, (void *)ifn, ifn->if_index);
-		LIST_FOREACH(sctp_ifa, &sctp_ifn->ifalist, next_ifa) {		
-			if (sctp_ifa->address.sa.sa_family == family) {
-				sctp_delete_ip_address(sctp_ifa);
-			}
-		}
-		switch (family) {
-		case PF_INET:
-			in_purgeif(ifn);
-			break;
-#ifdef INET6
-		case PF_INET6:
-			in6_purgeif(ifn);
-			break;
-#endif
-		default:
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-			splx(s);
-#endif
-			return (EAFNOSUPPORT);
-		}
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-		splx(s);
-#endif
-		return (0);
-	}
-#endif
 	switch (req) {
 	case PRU_ATTACH:
 		error = sctp6_attach(so, family, p);
@@ -2071,24 +1792,30 @@ sctp6_usrreq(so, req, m, nam, control, p)
 		error = sctp6_detach(so);
 		break;
 	case PRU_BIND:
-		if (nam == NULL)
+		if (nam == NULL) {
+			SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 			return (EINVAL);
+		}
 		error = sctp6_bind(so, nam, p);
 		break;
 	case PRU_LISTEN:
 		error = sctp_listen(so, p);
 		break;
 	case PRU_CONNECT:
-		if (nam == NULL)
+		if (nam == NULL) {
+			SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 			return (EINVAL);
+		}
 		error = sctp6_connect(so, nam, p);
 		break;
 	case PRU_DISCONNECT:
 		error = sctp6_disconnect(so);
 		break;
 	case PRU_ACCEPT:
-		if (nam == NULL)
+		if (nam == NULL) {
+			SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EINVAL);
 			return (EINVAL);
+		}
 		error = sctp_accept(so, nam);
 		break;
 	case PRU_SHUTDOWN:
@@ -2116,9 +1843,11 @@ sctp6_usrreq(so, req, m, nam, control, p)
 		error = 0;
 		break;
 	case PRU_RCVOOB:
+		SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EAFNOSUPPORT);
 		error = EAFNOSUPPORT;
 		break;
 	case PRU_SENDOOB:
+		SCTP_LTRACE_ERR_RET(NULL, NULL, NULL, SCTP_FROM_SCTP6_USRREQ, EAFNOSUPPORT);
 		error = EAFNOSUPPORT;
 		break;
 	case PRU_PEERADDR:
@@ -2133,10 +1862,6 @@ sctp6_usrreq(so, req, m, nam, control, p)
 	default:
 		break;
 	}
-#if defined(__NetBSD__) || defined(__OpenBSD__)
-	splx(s);
-#endif
 	return (error);
 }
-
 #endif

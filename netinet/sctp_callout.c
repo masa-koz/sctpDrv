@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2001-2007, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2001-2007, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -43,7 +43,7 @@ extern int ticks;
 
 /*
  * SCTP_TIMERQ_LOCK protects:
- * - sctppcbinfo.callqueue
+ * - SCTP_BASE_INFO(callqueue)
  * - sctp_os_timer_current: current timer in process
  * - sctp_os_timer_next: next timer to check
  */
@@ -72,7 +72,7 @@ sctp_os_timer_start(sctp_os_timer_t *c, int to_ticks, void (*ftn) (void *),
 		if (c == sctp_os_timer_next) {
 			sctp_os_timer_next = TAILQ_NEXT(c, tqe);
 		}
-		TAILQ_REMOVE(&sctppcbinfo.callqueue, c, tqe);
+		TAILQ_REMOVE(&SCTP_BASE_INFO(callqueue), c, tqe);
 		/*
 		 * part of the normal "stop a pending callout" process
 		 * is to clear the CALLOUT_ACTIVE and CALLOUT_PENDING
@@ -92,7 +92,7 @@ sctp_os_timer_start(sctp_os_timer_t *c, int to_ticks, void (*ftn) (void *),
 	c->c_flags = (SCTP_CALLOUT_ACTIVE | SCTP_CALLOUT_PENDING);
 	c->c_func = ftn;
 	c->c_time = ticks + to_ticks;
-	TAILQ_INSERT_TAIL(&sctppcbinfo.callqueue, c, tqe);
+	TAILQ_INSERT_TAIL(&SCTP_BASE_INFO(callqueue), c, tqe);
 	SCTP_TIMERQ_UNLOCK();
 	splx(s);
 }
@@ -117,7 +117,7 @@ sctp_os_timer_stop(sctp_os_timer_t *c)
 	if (c == sctp_os_timer_next) {
 		sctp_os_timer_next = TAILQ_NEXT(c, tqe);
 	}
-	TAILQ_REMOVE(&sctppcbinfo.callqueue, c, tqe);
+	TAILQ_REMOVE(&SCTP_BASE_INFO(callqueue), c, tqe);
 	SCTP_TIMERQ_UNLOCK();
 	splx(s);
 	return (1);
@@ -140,19 +140,15 @@ sctp_fasttim(void)
 	s = splhigh();
 #if defined(__APPLE__)
 	/* update our tick count */
-	ticks += sctp_main_timer_ticks;
-/*
-printf("sctp_fasttim: ticks = %u (added %u)\n", (uint32_t)ticks,
-       (uint32_t)sctp_main_timer_ticks);
-*/
+	ticks += SCTP_BASE_VAR(sctp_main_timer_ticks);
 #endif
 
 	SCTP_TIMERQ_LOCK();
-	c = TAILQ_FIRST(&sctppcbinfo.callqueue);
+	c = TAILQ_FIRST(&SCTP_BASE_INFO(callqueue));
 	while (c) {
 		if (c->c_time <= ticks) {
 			sctp_os_timer_next = TAILQ_NEXT(c, tqe);
-			TAILQ_REMOVE(&sctppcbinfo.callqueue, c, tqe);
+			TAILQ_REMOVE(&SCTP_BASE_INFO(callqueue), c, tqe);
 			c_func = c->c_func;
 			c_arg = c->c_arg;
 			c->c_flags &= ~SCTP_CALLOUT_PENDING;

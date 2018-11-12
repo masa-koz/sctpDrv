@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2001-2007, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2001-2007, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -32,7 +32,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_output.h,v 1.4 2007/04/03 11:15:32 rrs Exp $");
+__FBSDID("$FreeBSD: head/sys/netinet/sctp_output.h 185694 2008-12-06 13:19:54Z rrs $");
 #endif
 
 #ifndef __sctp_output_h__
@@ -40,12 +40,7 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_output.h,v 1.4 2007/04/03 11:15:32 rrs 
 
 #include <netinet/sctp_header.h>
 
-#if defined(_KERNEL)
-
-struct mbuf *
-sctp_get_mbuf_for_msg(unsigned int space_needed, 
-		      int want_header, int how, int allonebuf, int type);
-
+#if defined(_KERNEL) || defined(__Userspace__)
 
 
 struct mbuf *
@@ -76,40 +71,52 @@ sctp_source_address_selection(struct sctp_inpcb *inp,
 			      sctp_route_t *ro, struct sctp_nets *net,
 			      int non_asoc_addr_ok, uint32_t vrf_id);
 
+#if defined(__FreeBSD__) || defined(__APPLE__) || defined(__Userspace__)
+int
+sctp_v6src_match_nexthop(struct sockaddr_in6 *src6, sctp_route_t *ro);
+int
+sctp_v4src_match_nexthop(struct sctp_ifa *sifa, sctp_route_t *ro);
+#endif
 
-
-void sctp_send_initiate(struct sctp_inpcb *, struct sctp_tcb *);
+void sctp_send_initiate(struct sctp_inpcb *, struct sctp_tcb *, int
+#if !defined(__APPLE__) && !defined(SCTP_SO_LOCK_TESTING)
+    SCTP_UNUSED
+#endif
+    );
 
 void
 sctp_send_initiate_ack(struct sctp_inpcb *, struct sctp_tcb *,
-    struct mbuf *, int, int, struct sctphdr *, struct sctp_init_chunk *);
+    struct mbuf *, int, int, struct sctphdr *, struct sctp_init_chunk *,
+    uint32_t, uint16_t, int);
 
 struct mbuf *
 sctp_arethere_unrecognized_parameters(struct mbuf *, int, int *,
-    struct sctp_chunkhdr *);
+				      struct sctp_chunkhdr *, int *);
 void sctp_queue_op_err(struct sctp_tcb *, struct mbuf *);
 
 int
 sctp_send_cookie_echo(struct mbuf *, int, struct sctp_tcb *,
     struct sctp_nets *);
-int sctp_send_cookie_ack(struct sctp_tcb *);
+
+void sctp_send_cookie_ack(struct sctp_tcb *);
 
 void
 sctp_send_heartbeat_ack(struct sctp_tcb *, struct mbuf *, int, int,
     struct sctp_nets *);
 
 
-int sctp_send_shutdown(struct sctp_tcb *, struct sctp_nets *);
+void sctp_send_shutdown(struct sctp_tcb *, struct sctp_nets *);
 
-int sctp_send_shutdown_ack(struct sctp_tcb *, struct sctp_nets *);
+void sctp_send_shutdown_ack(struct sctp_tcb *, struct sctp_nets *);
 
-int sctp_send_shutdown_complete(struct sctp_tcb *, struct sctp_nets *);
+void sctp_send_shutdown_complete(struct sctp_tcb *, struct sctp_nets *);
 
-int sctp_send_shutdown_complete2(struct mbuf *, int, struct sctphdr *);
+void sctp_send_shutdown_complete2(struct mbuf *, int, struct sctphdr *,
+				 uint32_t, uint16_t);
 
-int sctp_send_asconf(struct sctp_tcb *, struct sctp_nets *);
+void sctp_send_asconf(struct sctp_tcb *, struct sctp_nets *, int addr_locked);
 
-int sctp_send_asconf_ack(struct sctp_tcb *, uint32_t);
+void sctp_send_asconf_ack(struct sctp_tcb *);
 
 int sctp_get_frag_point(struct sctp_tcb *, struct sctp_association *);
 
@@ -123,12 +130,27 @@ void sctp_fix_ecn_echo(struct sctp_association *);
 int
 sctp_output(struct sctp_inpcb *, struct mbuf *, struct sockaddr *,
     struct mbuf *, struct thread *, int);
-
-#else
-int
+#elif defined(__Windows__)
 sctp_output(struct sctp_inpcb *, struct mbuf *, struct sockaddr *,
-    struct mbuf *, struct proc *, int);
-
+    struct mbuf *, PKTHREAD, int);
+#else
+#if defined(__Userspace__)
+/* sctp_output is called bu sctp_sendm. Not using sctp_sendm for __Userspace__ */
+#endif
+int
+sctp_output(struct sctp_inpcb *,
+#if defined(__Panda__)
+    pakhandle_type,
+#else
+    struct mbuf *,
+#endif
+    struct sockaddr *,
+#if defined(__Panda__)
+    pakhandle_type,
+#else
+    struct mbuf *,
+#endif
+    struct proc *, int);
 #endif
 
 void
@@ -136,12 +158,23 @@ sctp_insert_on_wheel(struct sctp_tcb *stcb,
     struct sctp_association *asoc,
     struct sctp_stream_out *strq, int holdslock);
 
-int sctp_chunk_output(struct sctp_inpcb *, struct sctp_tcb *, int);
-void sctp_send_abort_tcb(struct sctp_tcb *, struct mbuf *);
+void sctp_chunk_output(struct sctp_inpcb *, struct sctp_tcb *, int, int
+#if !defined(__APPLE__) && !defined(SCTP_SO_LOCK_TESTING)
+    SCTP_UNUSED
+#endif
+    );
+void sctp_send_abort_tcb(struct sctp_tcb *, struct mbuf *, int
+#if !defined(__APPLE__) && !defined(SCTP_SO_LOCK_TESTING)
+    SCTP_UNUSED
+#endif
+    );
 
 void send_forward_tsn(struct sctp_tcb *, struct sctp_association *);
 
 void sctp_send_sack(struct sctp_tcb *);
+
+/* EY 05/07/08 if nr_sacks used, the following function will be called instead of sctp_send_sack */
+void sctp_send_nr_sack(struct sctp_tcb *);
 
 int sctp_send_hb(struct sctp_tcb *, int, struct sctp_nets *);
 
@@ -190,17 +223,16 @@ sctp_send_str_reset_req(struct sctp_tcb *stcb,
 
 void
 sctp_send_abort(struct mbuf *, int, struct sctphdr *, uint32_t,
-    struct mbuf *);
+    struct mbuf *, uint32_t, uint16_t);
 
-void sctp_send_operr_to(struct mbuf *, int, struct mbuf *, uint32_t);
+void sctp_send_operr_to(struct mbuf *, int, struct mbuf *, uint32_t, uint32_t, uint16_t);
 
+#endif /* _KERNEL || __Userspace__ */
+
+#if defined(_KERNEL) || defined (__Userspace__)
 int
 sctp_sosend(struct socket *so,
-#ifdef __NetBSD__
-    struct mbuf *addr_mbuf,
-#else
     struct sockaddr *addr,
-#endif
     struct uio *uio,
 #ifdef __Panda__
     pakhandle_type top,
@@ -209,13 +241,18 @@ sctp_sosend(struct socket *so,
     struct mbuf *top,
     struct mbuf *control,
 #endif
-#if defined(__NetBSD__) || defined(__APPLE__) || defined(__Panda__)
+#if defined(__APPLE__) || defined(__Panda__)
     int flags
 #else
     int flags,
 #if defined(__FreeBSD__) && __FreeBSD_version >= 500000
     struct thread *p
+#elif defined(__Windows__)
+    PKTHREAD p
 #else
+#if defined(__Userspace__)
+    /* proc is a dummy in __Userspace__ and will not be passed to sctp_lower_sosend */
+#endif
     struct proc *p
 #endif
 #endif
@@ -223,3 +260,4 @@ sctp_sosend(struct socket *so,
 
 #endif
 #endif
+

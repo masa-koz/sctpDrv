@@ -1,0 +1,18 @@
+LIBRARY SCTPSP.dll
+EXPORTS
+WSPStartup
+sctp_bindx@16
+sctp_connectx@16
+sctp_freeladdrs@4
+sctp_freepaddrs@4
+sctp_getaddrlen@4
+sctp_getassocid@8
+sctp_getladdrs@12
+sctp_getpaddrs@12
+sctp_opt_info@20
+sctp_peeloff@8
+sctp_recvmsg@28
+sctp_send@20
+sctp_sendmsg@40
+sctp_sendmsgx@40
+sctp_sendx@28

@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2006-2007, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2006-2007, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -29,7 +29,7 @@
  */
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_os.h,v 1.6 2007/03/15 11:27:13 rrs Exp $");
+__FBSDID("$FreeBSD: head/sys/netinet/sctp_os.h 171943 2007-08-24 00:53:53Z rrs $");
 #endif
 #ifndef __sctp_os_h__
 #define __sctp_os_h__
@@ -60,26 +60,24 @@ __FBSDID("$FreeBSD: src/sys/netinet/sctp_os.h,v 1.6 2007/03/15 11:27:13 rrs Exp 
 
 #if defined(__FreeBSD__)
 #include <netinet/sctp_os_bsd.h>
+#else
+#define MODULE_GLOBAL(_A, _B) (_B)
+#endif
+
+#if defined(__Userspace__)
+#include <netinet/sctp_os_userspace.h>
 #endif
 
 #if defined(__APPLE__)
 #include <netinet/sctp_os_macosx.h>
 #endif
 
-#if defined(__NetBSD__)
-#include <netinet/sctp_os_netbsd.h>
-#endif
-
-#if defined(__OpenBSD__)
-#include <netinet/sctp_os_openbsd.h>
-#endif
-
 #if defined(__Panda__)
-#include "sctp_os_iox.h"
+#include <ip/sctp/sctp_os_iox.h>
 #endif
 
 #if defined(__Windows__)
-#include "sctp_os_windows.h"
+#include <netinet/sctp_os_windows.h>
 #endif
 
 /* All os's must implement this address gatherer. If

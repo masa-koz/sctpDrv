@@ -1,0 +1,21 @@
+C_DEFINES=$(C_DEFINES) -D__Windows__
+
+TARGETNAME=sctpmon
+TARGETTYPE=DYNLINK
+
+USE_LIBCMT=1
+UMTYPE=windows
+
+TARGETLIBS= \
+    $(SDK_LIB_PATH)\kernel32.lib \
+    $(SDK_LIB_PATH)\user32.lib \
+    $(SDK_LIB_PATH)\ws2_32.lib \
+    C:\PROGRA~1\MI2578~1\Windows\v6.0\Lib\Netsh.lib
+
+
+INCLUDES=..\..; \
+    C:\PROGRA~1\MI2578~1\Windows\v6.0\Include
+
+SOURCES= \
+    sctpmon.c \
+    sctpmon.rc

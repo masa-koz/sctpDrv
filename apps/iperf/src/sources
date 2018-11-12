@@ -1,0 +1,41 @@
+!include ..\sources.inc
+
+USE_MSVCRT=1
+
+TARGETNAME=iperf
+TARGETTYPE=PROGRAM
+
+UMENTRY=main
+UMTYPE=console
+
+INCLUDES= \
+    ..\include; \
+    ..\..\inc; \
+    c:\work\stdint;
+
+TARGETLIBS= \
+    $(DDK_LIB_PATH)\ws2_32.lib \
+    ..\compat\obj$(BUILD_ALT_DIR)\*\libcompat.lib
+
+SOURCES= \
+    Client.cpp \
+    Extractor.c \
+    gnu_getopt.c \
+    gnu_getopt_long.c \
+    Launch.cpp \
+    List.cpp \
+    Listener.cpp \
+    Locale.c \
+    main.cpp \
+    PerfSocket.cpp \
+    ReportCSV.c \
+    ReportDefault.c \
+    Reporter.c \
+    Server.cpp \
+    service.c \
+    Settings.cpp \
+    SocketAddr.c \
+    sockets.c \
+    stdio.c \
+    tcp_window_size.c \
+    iperf.rc

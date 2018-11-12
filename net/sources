@@ -1,10 +1,18 @@
-MAKEDIR=.
+!include ..\sources.inc
+
 TARGETNAME=net
 TARGETTYPE=LIBRARY
-TARGETPATH=.
-TARGETLIBS=
-C_DEFINES=-DNTVERSION=$(NTVERSION) -D_KERNEL -D__Windows__ -DINET -DINET6 -DSCTP_DEBUG -DHAVE_SALEN
-MSC_WARNING_LEVEL=/W1 /WX
-INCLUDES=..;..\algrthms;..\common;..\inc;$(BASEDIR)\inc\crt;$(BASEDIR)\inc\ddk\wxp;$(BASEDIR)\src\network\inc
-SOURCES=	\
-    radix.c
+
+INCLUDES= \
+    ..; \
+    ..\algrthms; \
+    ..\subr; \
+    ..\net; \
+    ..\netinet; \
+    $(DDK_INC_PATH)
+
+SOURCES= \
+    if.c \
+    radix.c \
+    radix_mpath.c \
+    route.c

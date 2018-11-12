@@ -1,0 +1,60 @@
+CANDLE=candle
+LIGHT=light
+
+# Change these paths if needed
+XP32TREE=bin\xp32
+VISTA32TREE=bin\vista32
+XP32SYMBOL=symbol\xp32
+VISTA32SYMBOL=symbol\vista32
+SYMSTORE=..\..\sctpDrv_symstore
+SYMSTORE_PUBLIC=..\..\sctpDrv_symstore_pub
+
+.SUFFIXES: .wxs
+
+all: \
+	binplace \
+	sctpDrv.msi
+
+binplace:
+	-binplace -p placefil.txt -r $(XP32TREE) -a -x -y -s $(XP32SYMBOL)\public -n $(XP32SYMBOL)\private ..\drv\objfre_wxp_x86\i386\sctp.sys
+	-binplace -p placefil.txt -r $(XP32TREE) -a -x -y -s $(XP32SYMBOL)\public -n $(XP32SYMBOL)\private ..\sp\dll\objfre_wxp_x86\i386\sctpsp.dll
+	-binplace -p placefil.txt -r $(XP32TREE) -a -x -y -s $(XP32SYMBOL)\public -n $(XP32SYMBOL)\private ..\netsh\sctpmon\objfre_wxp_x86\i386\sctpmon.dll
+	-binplace -p placefil.txt -r $(XP32TREE) -a -x -y -s $(XP32SYMBOL)\public -n $(XP32SYMBOL)\private ..\sp\spinstall\objfre_wxp_x86\i386\spinstall.exe
+	-binplace -p placefil.txt -r $(XP32TREE) -a -x -y -s $(XP32SYMBOL)\public -n $(XP32SYMBOL)\private ..\apps\echo_client\objfre_wxp_x86\i386\echo_client.exe
+	-binplace -p placefil.txt -r $(XP32TREE) -a -x -y -s $(XP32SYMBOL)\public -n $(XP32SYMBOL)\private ..\apps\echo_server\objfre_wxp_x86\i386\echo_server.exe
+	-binplace -p placefil.txt -r $(XP32TREE) -a -x -y -s $(XP32SYMBOL)\public -n $(XP32SYMBOL)\private ..\apps\echo_server2\objfre_wxp_x86\i386\echo_server2.exe
+	-binplace -p placefil.txt -r $(XP32TREE) -a -x -y -s $(XP32SYMBOL)\public -n $(XP32SYMBOL)\private ..\apps\iperf\src\objfre_wxp_x86\i386\iperf.exe
+	-binplace -p placefil.txt -r $(VISTA32TREE) -a -x -y -s $(VISTA32SYMBOL)\public -n $(VISTA32SYMBOL)\private ..\drv\objfre_wlh_x86\i386\sctp.sys
+	-binplace -p placefil.txt -r $(VISTA32TREE) -a -x -y -s $(VISTA32SYMBOL)\public -n $(VISTA32SYMBOL)\private ..\sp\dll\objfre_wlh_x86\i386\sctpsp.dll
+	-binplace -p placefil.txt -r $(VISTA32TREE) -a -x -y -s $(VISTA32SYMBOL)\public -n $(VISTA32SYMBOL)\private ..\netsh\sctpmon\objfre_wlh_x86\i386\sctpmon.dll
+	-binplace -p placefil.txt -r $(VISTA32TREE) -a -x -y -s $(VISTA32SYMBOL)\public -n $(VISTA32SYMBOL)\private ..\sp\spinstall\objfre_wlh_x86\i386\spinstall.exe
+	-binplace -p placefil.txt -r $(VISTA32TREE) -a -x -y -s $(VISTA32SYMBOL)\public -n $(VISTA32SYMBOL)\private ..\apps\echo_client\objfre_wlh_x86\i386\echo_client.exe
+	-binplace -p placefil.txt -r $(VISTA32TREE) -a -x -y -s $(VISTA32SYMBOL)\public -n $(VISTA32SYMBOL)\private ..\apps\echo_server\objfre_wlh_x86\i386\echo_server.exe
+	-binplace -p placefil.txt -r $(VISTA32TREE) -a -x -y -s $(VISTA32SYMBOL)\public -n $(VISTA32SYMBOL)\private ..\apps\echo_server2\objfre_wlh_x86\i386\echo_server2.exe
+	-binplace -p placefil.txt -r $(VISTA32TREE) -a -x -y -s $(VISTA32SYMBOL)\public -n $(VISTA32SYMBOL)\private ..\apps\iperf\src\objfre_wlh_x86\i386\iperf.exe
+
+symstore:
+	-symstore add /o /l /r /f $(XP32SYMBOL)\*.pdb /s $(SYMSTORE) /compress /t "sctpDrv for XP" /z pri
+	-symstore add /o /l /r /f $(VISTA32SYMBOL)\*.pdb /s $(SYMSTORE) /compress  /t "sctpDrv for Vista32" /z pri
+	-symstore add /o /l /r /f $(XP32SYMBOL)\*.pdb /s $(SYMSTORE_PUBLIC) /compress /t "sctpDrv for XP" /z pub
+	-symstore add /o /l /r /f $(VISTA32SYMBOL)\*.pdb /s $(SYMSTORE_PUBLIC) /compress  /t "sctpDrv for Vista32" /z pub
+
+clean:
+	-rmdir /S /Q $(XP32TREE) $(VISTA32TREE) $(SYMBOL)
+	-del *.wixobj *.msm *.msi
+
+.wxs.wixobj::
+	$(CANDLE) $<
+
+module-common.msm: module-common.wixobj ..\apps\inc\ws2sctp.h ..\apps\echo_client\echo_client.c ..\apps\echo_server\echo_server.c ..\apps\echo_server2\echo_server2.c
+	$(LIGHT) module-common.wixobj
+
+module-xp32.msm: module-xp32.wixobj $(XP32TREE)\sctpsp.dll ..\sp\dll\objfre_wxp_x86\i386\sctpsp.lib $(XP32TREE)\sctpmon.dll $(XP32TREE)\sctp.sys $(XP32TREE)\spinstall.exe $(XP32TREE)\echo_client.exe $(XP32TREE)\echo_server.exe $(XP32TREE)\iperf.exe
+	$(LIGHT) module-xp32.wixobj
+
+module-vista32.msm: module-vista32.wixobj $(VISTA32TREE)\sctpsp.dll ..\sp\dll\objfre_wlh_x86\i386\sctpsp.lib $(VISTA32TREE)\sctpmon.dll $(VISTA32TREE)\sctp.sys $(VISTA32TREE)\spinstall.exe $(VISTA32TREE)\echo_client.exe $(VISTA32TREE)\echo_server.exe $(VISTA32TREE)\iperf.exe
+	$(LIGHT) module-vista32.wixobj
+
+sctpDrv.msi: sctpDrv.wixobj setup.wixobj module-common.msm module-xp32.msm module-vista32.msm objfre_wxp_x86\i386\setup.dll objfre_wlh_x86\i386\setup.dll
+	$(LIGHT) sctpDrv.wixobj setup.wixobj -out sctpDrv.msi
+

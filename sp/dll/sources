@@ -1,0 +1,27 @@
+C_DEFINES=-DNT -D__Windows__ -DHAVE_SCTP_PEELOFF_SOCKOPT
+
+TARGETNAME=sctpsp
+TARGETTYPE=DYNLINK
+
+USE_NTDLL=1
+UMTYPE=windows
+
+TARGETLIBS= \
+    $(SDK_LIB_PATH)\ntdll.lib \
+    $(SDK_LIB_PATH)\kernel32.lib \
+    $(SDK_LIB_PATH)\advapi32.lib \
+    $(SDK_LIB_PATH)\wsock32.lib \
+    $(DDK_LIB_PATH)\tdi.lib \
+    $(SDK_LIB_PATH)\user32.lib  
+
+
+INCLUDES=..; \
+    ..\..; \
+    ..\..\drv; \
+    ..\..\apps\inc
+
+SOURCES= \
+    sctpsp.c \
+    sctp_sys_calls.c \
+    sctpsp.rc \
+    _errno.mc

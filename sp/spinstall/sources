@@ -1,0 +1,20 @@
+C_DEFINES=$(C_DEFINES) -DUNICODE -D_UNICODE
+USE_MSVCRT=1
+
+TARGETNAME=spinstall
+TARGETTYPE=PROGRAM
+
+UMENTRY=wmain
+UMTYPE=console
+
+INCLUDES=..
+
+TARGETLIBS= \
+    $(DDK_LIB_PATH)\ws2_32.lib \
+    $(DDK_LIB_PATH)\Rpcrt4.lib
+
+
+SOURCES= \
+    spinstall.c \
+    spinstall.rc 
+

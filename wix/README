@@ -1,0 +1,101 @@
+--------------------------------------------------------------------------------
+Copyright (C) 2008 by CO-CONV, Corp., Kyoto, Japan.
+
+Developed by co-research between CO-CONV, Corp. and WIDE Project.
+--------------------------------------------------------------------------------
+
+Operating System:
+ - Windows XP SP2 or SP3 (32bit)
+ - Windows Vista (32bit)
+
+
+Install:
+Double click sctpDrv-1-0-0-0.msi, which is a Windows Installer package of
+sctpDrv.
+A kernel driver(sctp.sys) and a dll(sctpsp.dll and sctpmon.dll ) installed
+into your system.
+There is no need to reboot your system.
+
+If you run sctpDrv on Vista, you have to modify the configuration of firewall.
+In brief, you have to configure Windows Firewall with Advanced Security to
+pass SCTP.
+In detail:
+ (1) Open Windows Firewall with Advanced snap-in.
+ (2) Right-click "Inbound Exceptions", and then click "New Exception".
+ (3) Create a new rule for SCTP:
+  Type: Custom
+  Programs and Services: System (enter into text line for full path)
+  Protocols and Ports:
+   Protocol Type: Custom (132)
+  Scope: Any addresses
+  Action: Allow all connections
+  Profiles: Apply to all the profiles (domain, public, public)
+
+
+Un-install:
+Open the context menu for sctpDrv-1-0-0-0.msi and click "Uninstall".
+After the un-installation, you have to reboot your system.
+
+
+Installed Files:
+After the installation, the below files will be installed into your system.
+
+--------------------------------------------------------------------------------
+c:\Program Files\sctpDrv\
+	\bin
+		\echo_client.exe	(Sample application)
+		\echo_server.exe	(Sample application)
+		\iperf.exe		(Performance measurement tool)
+	\inc
+		\ws2sctp.h		(Header files for use of SCTP)
+	\lib
+		\sctpsp.lib		(Import library for use of SCTP API)
+	\src
+		\echo_client.c		(One-to-One Client sample)
+		\echo_server.c		(One-to-One Model Server sample)
+		\echo_server2.c		(One-to-Many Model Server sample)
+
+c:\Windows\
+	\system32
+		\sctpsp.dll		(Dll for sctpDrv)
+		\sctpmon.dll		(Dll for netsh)
+		
+		\drivers
+			\sctp.sys	(Kernel driver of SCTP)
+--------------------------------------------------------------------------------
+
+
+Use of SCTP:
+In order to use SCTP, you have to append the directory of ws2sctp.h into the
+Include Path of your compiler and link sctpsp.lib into your application.
+
+In the case of Visual C++ compiler,
+prompt>cl /D__Windows__ /I "c:\Program Files\SctpDriver\inc" echo_client.c \
+	ws2_32.lib "c:\Program Files\sctpDrv\lib\sctpsp.lib"
+
+
+Limitations and knonw bugs:
+ - On XP, updating route information may be slow.
+
+
+Development of sctpDrv:
+You can access the source codes of sctpDrv under the modified BSD license.
+	Available at http://trac.sctp.jp/sctpDrv/
+
+
+Mail lists for sctpDrv:
+There are two lists for sctpDrv.
+
+sctpdrv-users at sctp.jp		(for users of sctpDrv)
+sctpdrv-dev at sctp.jp			(for developers of sctpDrv)
+
+In order to subscribe these lists, you will access
+	http://www.sctp.jp/mailman/listinfo/sctpdrv-users OR
+	http://www.sctp.jp/mailman/listinfo/sctpdrv-dev
+
+If you encounter a trouble with regatd to sctpDrv, please contact us
+through these lists.
+--------------------------------------------------------------------------------
+
+
+Happy SCTPing!

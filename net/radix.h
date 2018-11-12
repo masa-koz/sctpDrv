@@ -1,4 +1,7 @@
-/*-
+/*	$OpenBSD: radix.h,v 1.13 2006/06/16 15:50:28 claudio Exp $	*/
+/*	$NetBSD: radix.h,v 1.8 1996/02/13 22:00:37 christos Exp $	*/
+
+/*
  * Copyright (c) 1988, 1989, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -10,7 +13,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -27,22 +30,10 @@
  * SUCH DAMAGE.
  *
  *	@(#)radix.h	8.2 (Berkeley) 10/31/94
- * $FreeBSD: /repoman/r/ncvs/src/sys/net/radix.h,v 1.26 2005/01/07 01:45:35 imp Exp $
  */
 
-#ifndef _RADIX_H_
-#define	_RADIX_H_
-
-#if !defined(__Windows__)
-#ifdef _KERNEL
-#include <sys/_lock.h>
-#include <sys/_mutex.h>
-#endif
-#endif
-
-#ifdef MALLOC_DECLARE
-MALLOC_DECLARE(M_RTABLE);
-#endif
+#ifndef _NET_RADIX_H_
+#define	_NET_RADIX_H_
 
 /*
  * Radix search tree node layout.
@@ -50,8 +41,8 @@ MALLOC_DECLARE(M_RTABLE);
 
 struct radix_node {
 	struct	radix_mask *rn_mklist;	/* list of masks contained in subtree */
-	struct	radix_node *rn_parent;	/* parent */
-	short	rn_bit;			/* bit offset; -1-index(netmask) */
+	struct	radix_node *rn_p;	/* parent */
+	short	rn_b;			/* bit offset; -1-index(netmask) */
 	char	rn_bmask;		/* node: mask for bit test*/
 	u_char	rn_flags;		/* enumerated next */
 #define RNF_NORMAL	1		/* leaf contains normal route */
@@ -68,7 +59,7 @@ struct radix_node {
 			struct	radix_node *rn_L;/* progeny */
 			struct	radix_node *rn_R;/* progeny */
 		} rn_node;
-	}		rn_u;
+	} rn_u;
 #ifdef RN_DEBUG
 	int rn_info;
 	struct radix_node *rn_twin;
@@ -76,19 +67,19 @@ struct radix_node {
 #endif
 };
 
-#define	rn_dupedkey	rn_u.rn_leaf.rn_Dupedkey
-#define	rn_key		rn_u.rn_leaf.rn_Key
-#define	rn_mask		rn_u.rn_leaf.rn_Mask
-#define	rn_offset	rn_u.rn_node.rn_Off
-#define	rn_left		rn_u.rn_node.rn_L
-#define	rn_right	rn_u.rn_node.rn_R
+#define rn_dupedkey rn_u.rn_leaf.rn_Dupedkey
+#define rn_key rn_u.rn_leaf.rn_Key
+#define rn_mask rn_u.rn_leaf.rn_Mask
+#define rn_off rn_u.rn_node.rn_Off
+#define rn_l rn_u.rn_node.rn_L
+#define rn_r rn_u.rn_node.rn_R
 
 /*
  * Annotations to tree concerning potential routes applying to subtrees.
  */
 
-struct radix_mask {
-	short	rm_bit;			/* bit offset; -1-index(netmask) */
+extern struct radix_mask {
+	short	rm_b;			/* bit offset; -1-index(netmask) */
 	char	rm_unused;		/* cf. rn_bmask */
 	u_char	rm_flags;		/* cf. rn_flags */
 	struct	radix_mask *rm_mklist;	/* more masks to try */
@@ -97,100 +88,93 @@ struct radix_mask {
 		struct	radix_node *rmu_leaf;	/* for normal routes */
 	}	rm_rmu;
 	int	rm_refs;		/* # of references to this struct */
-};
+} *rn_mkfreelist;
 
-#define	rm_mask rm_rmu.rmu_mask
-#define	rm_leaf rm_rmu.rmu_leaf		/* extra field would make 32 bytes */
+#define rm_mask rm_rmu.rmu_mask
+#define rm_leaf rm_rmu.rmu_leaf		/* extra field would make 32 bytes */
 
-typedef int walktree_f_t(struct radix_node *, void *);
+#define MKGet(m) {\
+	if (rn_mkfreelist) {\
+		m = rn_mkfreelist; \
+		rn_mkfreelist = (m)->rm_mklist; \
+	} else \
+		R_Malloc(m, struct radix_mask *, sizeof (*(m))); }\
+
+#define MKFree(m) { (m)->rm_mklist = rn_mkfreelist; rn_mkfreelist = (m);}
 
 struct radix_node_head {
 	struct	radix_node *rnh_treetop;
 	int	rnh_addrsize;		/* permit, but not require fixed keys */
 	int	rnh_pktsize;		/* permit, but not require fixed keys */
-	struct	radix_node *(*rnh_addaddr)	/* add based on sockaddr */
-		(void *v, void *mask,
+					/* add based on sockaddr */
+	struct	radix_node *(*rnh_addaddr)(void *v, void *mask,
 		     struct radix_node_head *head, struct radix_node nodes[]);
-	struct	radix_node *(*rnh_addpkt)	/* add based on packet hdr */
-		(void *v, void *mask,
-		     struct radix_node_head *head, struct radix_node nodes[]);
-	struct	radix_node *(*rnh_deladdr)	/* remove based on sockaddr */
-		(void *v, void *mask, struct radix_node_head *head);
-	struct	radix_node *(*rnh_delpkt)	/* remove based on packet hdr */
-		(void *v, void *mask, struct radix_node_head *head);
-	struct	radix_node *(*rnh_matchaddr)	/* locate based on sockaddr */
-		(void *v, struct radix_node_head *head);
-	struct	radix_node *(*rnh_lookup)	/* locate based on sockaddr */
-		(void *v, void *mask, struct radix_node_head *head);
-	struct	radix_node *(*rnh_matchpkt)	/* locate based on packet hdr */
-		(void *v, struct radix_node_head *head);
-	int	(*rnh_walktree)			/* traverse tree */
-		(struct radix_node_head *head, walktree_f_t *f, void *w);
-	int	(*rnh_walktree_from)		/* traverse tree below a */
-		(struct radix_node_head *head, void *a, void *m,
-		     walktree_f_t *f, void *w);
-	void	(*rnh_close)	/* do something when the last ref drops */
-		(struct radix_node *rn, struct radix_node_head *head);
-	struct	radix_node rnh_nodes[3];	/* empty tree for common case */
-#if !defined(__Windows__)
-#ifdef _KERNEL
-	struct	mtx rnh_mtx;			/* locks entire radix tree */
-#endif
-#else
-	KMUTEX rnh_mtx;
-#endif
+					/* remove based on sockaddr */
+	struct	radix_node *(*rnh_deladdr)(void *v, void *mask,
+		    struct radix_node_head *head, struct radix_node *rn);
+					/* locate based on sockaddr */
+	struct	radix_node *(*rnh_matchaddr)(void *v,
+		    struct radix_node_head *head);
+					/* locate based on sockaddr */
+	struct	radix_node *(*rnh_lookup)(void *v, void *mask,
+		    struct radix_node_head *head);
+					/* traverse tree */
+	int	(*rnh_walktree)(struct radix_node_head *,
+		     int (*)(struct radix_node *, void *), void *);
+	struct	radix_node rnh_nodes[3];/* empty tree for common case */
+	int	rnh_multipath;		/* multipath? */
+	KSPIN_LOCK rnh_spinlock;
+	KLOCK_QUEUE_HANDLE rnh_lockqueue;
 };
 
-#ifndef _KERNEL
-#define R_Malloc(p, t, n) (p = (t) malloc((unsigned int)(n)))
-#define R_Zalloc(p, t, n) (p = (t) calloc(1,(unsigned int)(n)))
-#define Free(p) free((char *)p);
-#else
-#if !defined(__Windows__)
-#define R_Malloc(p, t, n) (p = (t) malloc((unsigned long)(n), M_RTABLE, M_NOWAIT))
-#define R_Zalloc(p, t, n) (p = (t) malloc((unsigned long)(n), M_RTABLE, M_NOWAIT | M_ZERO))
-#define Free(p) free((caddr_t)p, M_RTABLE);
+extern int max_keylen;
 
-#define	RADIX_NODE_HEAD_LOCK_INIT(rnh)	\
-    mtx_init(&(rnh)->rnh_mtx, "radix node head", NULL, MTX_DEF | MTX_RECURSE)
-#define	RADIX_NODE_HEAD_LOCK(rnh)	mtx_lock(&(rnh)->rnh_mtx)
-#define	RADIX_NODE_HEAD_UNLOCK(rnh)	mtx_unlock(&(rnh)->rnh_mtx)
-#define	RADIX_NODE_HEAD_DESTROY(rnh)	mtx_destroy(&(rnh)->rnh_mtx)
-#define	RADIX_NODE_HEAD_LOCK_ASSERT(rnh) mtx_assert(&(rnh)->rnh_mtx, MA_OWNED)
-#else
+#ifdef _KERNEL
+#define Bcmp(a, b, n) memcmp(((caddr_t)(a)), ((caddr_t)(b)), (unsigned)(n))
+#define Bcopy(a, b, n) memcpy(((caddr_t)(b)), ((caddr_t)(a)), (unsigned)(n))
+#define Bzero(p, n) memset((caddr_t)(p), 0, (unsigned)(n));
 #define R_Malloc(p, t, n) (p = (t) ExAllocatePool(NonPagedPool, (n)))
-#define R_Zalloc(p, t, n) do { \
-	R_Malloc(p, t, n); \
-	RtlZeroMemory((p), (n)); \
-} while (0)
 #define Free(p) ExFreePool((p))
 
-#define	RADIX_NODE_HEAD_LOCK_INIT(rnh) \
-	KeInitializeMutex(&(rnh)->rnh_mtx, 0)
-#define	RADIX_NODE_HEAD_LOCK(rnh) \
-	KeWaitForMutexObject(&(rnh)->rnh_mtx, Executive, KernelMode, FALSE, NULL)
-#define	RADIX_NODE_HEAD_UNLOCK(rnh) \
-	KeReleaseMutex(&(rnh)->rnh_mtx, 0)
-#define	RADIX_NODE_HEAD_DESTROY(rnh) do { \
-	if (KeReadStateMutex(&(rnh)->rnh_mtx) == 0) { \
-		KeReleaseMutex(&(rnh)->rnh_mtx, 0); \
-	} \
+#define	RADIX_NODE_HEAD_LOCK_INIT(rnh) do { \
+	SCTPDBG(SCTP_DEBUG_NOISY, "RADIX_NODE_HEAD_LOCK_INIT(%p) @ %s[%d]\n", (rnh), __FILE__, __LINE__) ; \
+	KeInitializeSpinLock(&(rnh)->rnh_spinlock); \
 } while (0)
+
+#define	RADIX_NODE_HEAD_DESTROY(rnh) do { \
+	SCTPDBG(SCTP_DEBUG_NOISY, "RADIX_NODE_HEAD_DESTROY(%p) @ %s[%d]\n", (rnh), __FILE__, __LINE__) ; \
+} while (0)
+
+#define	RADIX_NODE_HEAD_LOCK(rnh) do { \
+	SCTPDBG(SCTP_DEBUG_NOISY, "RADIX_NODE_HEAD_LOCK(%p) @ %s[%d]\n", (rnh), __FILE__, __LINE__) ; \
+	KeAcquireInStackQueuedSpinLockAtDpcLevel(&(rnh)->rnh_spinlock, &(rnh)->rnh_lockqueue); \
+} while (0)
+
+#define	RADIX_NODE_HEAD_UNLOCK(rnh) do { \
+	SCTPDBG(SCTP_DEBUG_NOISY, "RADIX_NODE_HEAD_UNLOCK(%p) @ %s[%d]\n", (rnh), __FILE__, __LINE__) ; \
+	KeReleaseInStackQueuedSpinLockFromDpcLevel(&(rnh)->rnh_lockqueue); \
+} while (0)
+
 #define	RADIX_NODE_HEAD_LOCK_ASSERT(rnh)
-#endif
+
+void	rn_init(void);
+int	rn_inithead(void **, int);
+int	rn_inithead0(struct radix_node_head *, int);
+int	rn_refines(void *, void *);
+int	rn_walktree(struct radix_node_head *,
+	    int (*)(struct radix_node *, void *), void *);
+
+struct radix_node	*rn_addmask(void *, int, int);
+struct radix_node	*rn_addroute(void *, void *, struct radix_node_head *,
+			    struct radix_node [2]);
+struct radix_node	*rn_delete(void *, void *, struct radix_node_head *,
+			    struct radix_node *);
+struct radix_node	*rn_insert(void *, struct radix_node_head *, int *,
+			    struct radix_node [2]);
+struct radix_node	*rn_lookup(void *, void *, struct radix_node_head *);
+struct radix_node	*rn_match(void *, struct radix_node_head *);
+struct radix_node	*rn_newpair(void *, int, struct radix_node[2]);
+struct radix_node	*rn_search(void *, struct radix_node *);
+struct radix_node	*rn_search_m(void *, struct radix_node *, void *);
 #endif /* _KERNEL */
-
-void	 rn_init(void);
-int	 rn_inithead(void **, int);
-int	 rn_refines(void *, void *);
-struct radix_node
-	 *rn_addmask(void *, int, int),
-	 *rn_addroute (void *, void *, struct radix_node_head *,
-			struct radix_node [2]),
-	 *rn_delete(void *, void *, struct radix_node_head *),
-	 *rn_lookup (void *v_arg, void *m_arg,
-		        struct radix_node_head *head),
-	 *rn_match(void *, struct radix_node_head *);
-
-#endif /* _RADIX_H_ */
-
+#endif /* _NET_RADIX_H_ */

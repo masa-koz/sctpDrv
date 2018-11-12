@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2001-2007, Cisco Systems, Inc. All rights reserved.
+ * Copyright (c) 2001-2007, by Cisco Systems, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without 
  * modification, are permitted provided that the following conditions are met:
@@ -32,25 +32,27 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: src/sys/netinet/sctp_input.h,v 1.2 2007/01/18 09:58:43 rrs Exp $");
+__FBSDID("$FreeBSD: head/sys/netinet/sctp_input.h 180387 2008-07-09 16:45:30Z rrs $");
 #endif
 
 #ifndef __sctp_input_h__
 #define __sctp_input_h__
 
-#if defined(_KERNEL)
-int
+#if defined(_KERNEL) || defined(__Userspace__)
+void
 sctp_common_input_processing(struct mbuf **, int, int, int,
     struct sctphdr *, struct sctp_chunkhdr *, struct sctp_inpcb *,
-    struct sctp_tcb *, struct sctp_nets *, uint8_t);
-
+    struct sctp_tcb *, struct sctp_nets *, uint8_t, uint32_t, uint16_t);
 
 struct sctp_stream_reset_out_request *
-                              sctp_find_stream_reset(struct sctp_tcb *stcb, uint32_t seq, struct sctp_tmit_chunk **bchk);
+sctp_find_stream_reset(struct sctp_tcb *stcb, uint32_t seq,
+    struct sctp_tmit_chunk **bchk);
 
-void
-     sctp_reset_in_stream(struct sctp_tcb *stcb, int number_entries, uint16_t * list);
+void sctp_reset_in_stream(struct sctp_tcb *stcb, int number_entries,
+    uint16_t *list);
 
+
+int sctp_is_there_unsent_data(struct sctp_tcb *stcb);
 
 #endif
 #endif
